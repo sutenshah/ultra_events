@@ -72,7 +72,7 @@ module.exports = { sendWhatsAppMessage };
 app.get('/test-whatsapp', async (req, res) => {
   try {
     // Replace with YOUR phone number
-    await sendWhatsAppMessage('919067078342', 'Hello from Ultraa Events! 🎉 This is a test message from our API.');
+    await sendWhatsAppMessage('919422750728', 'Hello from Ultraa Events! 🎉 This is a test message from our API.');
     
     res.json({ success: true, message: 'WhatsApp message sent! Check your phone.' });
   } catch (error) {
