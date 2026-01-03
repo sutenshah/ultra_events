@@ -764,15 +764,38 @@ async function handleWelcomeStep(phoneNumber) {
         }
         
         // Description: date, time, venue (max 72 chars)
-        let eventDesc = `📅 ${formattedDate} • ⏰ ${eventTime}`;
-        const venuePart = `📍 ${e.Venue.substring(0, 30)}`;
-        // Combine description parts, ensure total <= 72 chars
-        if ((eventDesc + ' • ' + venuePart).length <= 72) {
-          eventDesc = eventDesc + ' • ' + venuePart;
+        // Build description parts
+        const datePart = `📅 ${formattedDate}`;
+        const timePart = eventTime ? `⏰ ${eventTime}` : '';
+        const venuePart = `📍 ${e.Venue}`;
+        
+        // Combine parts with separators
+        let eventDesc = datePart;
+        if (timePart) {
+          eventDesc = eventDesc + ' • ' + timePart;
+        }
+        
+        // Calculate available space for venue
+        const separator = ' • ';
+        const venueWithSeparator = separator + venuePart;
+        const maxDescLength = 72;
+        
+        // Check if we can add venue
+        if ((eventDesc + venueWithSeparator).length <= maxDescLength) {
+          eventDesc = eventDesc + venueWithSeparator;
         } else {
-          // Truncate venue if needed
-          const maxVenueLength = 72 - eventDesc.length - 3; // 3 for ' • '
-          eventDesc = eventDesc + ' • ' + venuePart.substring(0, maxVenueLength);
+          // Calculate how much space is left for venue
+          const availableSpace = maxDescLength - eventDesc.length - separator.length;
+          if (availableSpace > 5) { // Only add venue if we have at least 5 chars
+            const truncatedVenue = venuePart.substring(0, availableSpace);
+            eventDesc = eventDesc + separator + truncatedVenue;
+          }
+          // If no space, just keep date and time
+        }
+        
+        // Final safety check: ensure description is exactly <= 72 chars
+        if (eventDesc.length > maxDescLength) {
+          eventDesc = eventDesc.substring(0, maxDescLength - 3) + '...';
         }
         
         return {
@@ -995,24 +1018,38 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
       }
       
       // Description: date, time, venue (max 72 chars)
-      let eventDesc = `📅 ${formattedDate} • ⏰ ${eventTime}`;
+      // Build description parts
+      const datePart = `📅 ${formattedDate}`;
+      const timePart = eventTime ? `⏰ ${eventTime}` : '';
       const venuePart = `📍 ${e.Venue}`;
-      // Combine description parts, ensure total <= 72 chars
-      const combined = eventDesc + ' • ' + venuePart;
-      if (combined.length <= 72) {
-        eventDesc = combined;
+      
+      // Combine parts with separators
+      let eventDesc = datePart;
+      if (timePart) {
+        eventDesc = eventDesc + ' • ' + timePart;
+      }
+      
+      // Calculate available space for venue
+      const separator = ' • ';
+      const venueWithSeparator = separator + venuePart;
+      const maxDescLength = 72;
+      
+      // Check if we can add venue
+      if ((eventDesc + venueWithSeparator).length <= maxDescLength) {
+        eventDesc = eventDesc + venueWithSeparator;
       } else {
-        // Truncate venue if needed
-        const maxVenueLength = 72 - eventDesc.length - 3; // 3 for ' • '
-        if (maxVenueLength > 0) {
-          eventDesc = eventDesc + ' • ' + venuePart.substring(0, maxVenueLength);
-        } else {
-          // If description itself is too long, just use date
-          eventDesc = `📅 ${formattedDate} • ⏰ ${eventTime}`;
-          if (eventDesc.length > 72) {
-            eventDesc = eventDesc.substring(0, 69) + '...';
-          }
+        // Calculate how much space is left for venue
+        const availableSpace = maxDescLength - eventDesc.length - separator.length;
+        if (availableSpace > 5) { // Only add venue if we have at least 5 chars
+          const truncatedVenue = venuePart.substring(0, availableSpace);
+          eventDesc = eventDesc + separator + truncatedVenue;
         }
+        // If no space, just keep date and time
+      }
+      
+      // Final safety check: ensure description is exactly <= 72 chars
+      if (eventDesc.length > maxDescLength) {
+        eventDesc = eventDesc.substring(0, maxDescLength - 3) + '...';
       }
       
       return {
