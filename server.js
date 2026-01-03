@@ -479,13 +479,26 @@ async function sendButtonMessage(phoneNumber, bodyText, buttons) {
   }
 
   // WhatsApp Button Message (max 3 buttons)
-  const buttonArray = buttons.slice(0, 3).map((btn, index) => ({
-    type: 'reply',
-    reply: {
-      id: btn.id || `btn_${index}`,
-      title: btn.title || btn,
-    },
-  }));
+  // Support both reply buttons and URL buttons
+  const buttonArray = buttons.slice(0, 3).map((btn, index) => {
+    if (btn.url) {
+      // URL button - opens external link
+      return {
+        type: 'url',
+        url: btn.url,
+        title: btn.title || btn,
+      };
+    } else {
+      // Reply button - sends message back
+      return {
+        type: 'reply',
+        reply: {
+          id: btn.id || `btn_${index}`,
+          title: btn.title || btn,
+        },
+      };
+    }
+  });
 
   try {
     const response = await axios.post(
@@ -719,7 +732,22 @@ async function handleWelcomeStep(phoneNumber) {
       const eventRows = events.recordset.map((e, index) => {
         const eventDate = new Date(e.EventDate);
         const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-        const eventTime = e.EventTime ? new Date(`2000-01-01T${e.EventTime}`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+        // Format time - EventTime is TIME type (HH:MM:SS or HH:MM)
+        let eventTime = '';
+        if (e.EventTime) {
+          try {
+            // Handle TIME format (HH:MM:SS or HH:MM)
+            const timeStr = e.EventTime.toString();
+            const [hours, minutes] = timeStr.split(':');
+            const hour24 = parseInt(hours, 10);
+            const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
+            const ampm = hour24 >= 12 ? 'PM' : 'AM';
+            eventTime = `${hour12}:${minutes} ${ampm}`;
+          } catch (err) {
+            console.warn('⚠️ Error formatting time:', e.EventTime, err.message);
+            eventTime = e.EventTime.toString();
+          }
+        }
         
         // Add emoji based on event name or use default
         let emoji = '🎉';
@@ -789,6 +817,14 @@ async function handleWelcomeStep(phoneNumber) {
 }
 
 async function handleNameStep(phoneNumber, messageText, stateData) {
+  // Check if user is selecting an event instead of providing name
+  // This happens when user selects event from list while in "awaiting_name" state
+  if (messageText.startsWith('event_')) {
+    // User selected an event, handle it instead of treating as name
+    await handleEventSelection(phoneNumber, messageText, stateData);
+    return;
+  }
+  
   const name = messageText.trim();
   if (!name || name.length < 2) {
     await sendWhatsAppMessage(phoneNumber, 'Please enter a valid name.');
@@ -915,7 +951,22 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
     const eventRows = events.recordset.map((e) => {
       const eventDate = new Date(e.EventDate);
       const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-      const eventTime = e.EventTime ? new Date(`2000-01-01T${e.EventTime}`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+      // Format time - EventTime is TIME type (HH:MM:SS or HH:MM)
+      let eventTime = '';
+      if (e.EventTime) {
+        try {
+          // Handle TIME format (HH:MM:SS or HH:MM)
+          const timeStr = e.EventTime.toString();
+          const [hours, minutes] = timeStr.split(':');
+          const hour24 = parseInt(hours, 10);
+          const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
+          const ampm = hour24 >= 12 ? 'PM' : 'AM';
+          eventTime = `${hour12}:${minutes} ${ampm}`;
+        } catch (err) {
+          console.warn('⚠️ Error formatting time:', e.EventTime, err.message);
+          eventTime = e.EventTime.toString();
+        }
+      }
       
       // Add emoji based on event name
       let emoji = '🎉';
@@ -1024,7 +1075,22 @@ async function handleEventSelection(phoneNumber, messageText, stateData) {
   // Format event details nicely with emojis
   const eventDate = new Date(event.EventDate);
   const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  const eventTime = event.EventTime ? new Date(`2000-01-01T${event.EventTime}`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+  // Format time - EventTime is TIME type (HH:MM:SS or HH:MM)
+  let eventTime = '';
+  if (event.EventTime) {
+    try {
+      // Handle TIME format (HH:MM:SS or HH:MM)
+      const timeStr = event.EventTime.toString();
+      const [hours, minutes] = timeStr.split(':');
+      const hour24 = parseInt(hours, 10);
+      const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
+      const ampm = hour24 >= 12 ? 'PM' : 'AM';
+      eventTime = `${hour12}:${minutes} ${ampm}`;
+    } catch (err) {
+      console.warn('⚠️ Error formatting time:', event.EventTime, err.message);
+      eventTime = event.EventTime.toString();
+    }
+  }
   
   // Add emoji based on event name
   let emoji = '🎉';
@@ -1288,10 +1354,22 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
       VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending');
     `);
 
-  const paymentLink = `https://your-frontend.com/payment?orderId=${razorpayOrder.id}`;
-  await sendWhatsAppMessage(
+  // Create Razorpay payment link
+  // Use frontend payment page or Razorpay checkout URL
+  const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+  // Payment URL that opens Razorpay checkout
+  const paymentUrl = `${frontendUrl}/payment?orderId=${razorpayOrder.id}&amount=${Math.round(amount * 100)}&key=${process.env.RAZORPAY_KEY_ID}&email=${encodeURIComponent(email)}`;
+  
+  // Send payment button with URL (WhatsApp URL buttons open external links)
+  await sendButtonMessage(
     phoneNumber,
-    `Order: ${orderNumber}\nAmount: ₹${amount}\nPay securely: ${paymentLink}`,
+    `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\nClick the button below to complete your payment securely:`,
+    [
+      {
+        url: paymentUrl,
+        title: '💳 Pay Now',
+      },
+    ],
   );
 
   await updateConversationState(phoneNumber, 'main_menu', {});
