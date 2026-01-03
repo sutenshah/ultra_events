@@ -30,18 +30,104 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 //const axios = require('axios');
 
+// Phone number formatting function (optimized for Indian numbers)
+// Handles all Indian number formats: 9876543210, 919876543210, +919876543210, 09876543210
+// WhatsApp webhooks typically send numbers with country code already included
+function formatPhoneNumber(phone) {
+  if (!phone) return null;
+  
+  // Remove all non-digits (removes +, spaces, dashes, etc.)
+  let digits = `${phone}`.replace(/\D/g, '');
+  
+  // Remove leading 0 if present (Indian numbers sometimes have leading 0: 09876543210)
+  if (digits.startsWith('0')) {
+    digits = digits.substring(1);
+  }
+  
+  // Handle different input formats for Indian numbers
+  if (digits.length === 10) {
+    // Format: 9876543210 (10 digits without country code)
+    // Add India country code 91
+    digits = `91${digits}`;
+  } else if (digits.length === 12 && digits.startsWith('91')) {
+    // Format: 919876543210 (12 digits with country code) - Perfect!
+    // Keep as is
+  } else if (digits.length === 11) {
+    // Format: 91987654321 (11 digits) - might be missing last digit or has extra
+    // Or: 09876543210 (11 digits with leading 0) - already removed above
+    if (digits.startsWith('91')) {
+      // Has 91 but wrong length, take first 12 or pad
+      if (digits.length < 12) {
+        // Missing digit, this shouldn't happen but handle gracefully
+        console.warn(`⚠️ Phone number has 11 digits with 91: ${digits}`);
+      }
+      // Try to extract valid 10-digit number after 91
+      const numberPart = digits.substring(2); // Remove '91'
+      if (numberPart.length === 9) {
+        // Missing one digit, this is invalid
+        console.error(`❌ Invalid Indian phone number: missing digit`);
+        return null;
+      }
+    } else {
+      // 11 digits without 91, remove first digit (likely a 0 that wasn't stripped)
+      digits = `91${digits.substring(1)}`;
+    }
+  } else if (digits.length > 12) {
+    // Too many digits - extract valid Indian number
+    if (digits.startsWith('91')) {
+      // Take first 12 digits (91 + 10 digits)
+      digits = digits.substring(0, 12);
+    } else {
+      // Look for 91 followed by 10 digits in the string
+      const match = digits.match(/91\d{10}/);
+      if (match) {
+        digits = match[0];
+      } else {
+        // Fallback: take last 10 digits and add 91
+        digits = `91${digits.slice(-10)}`;
+      }
+    }
+  } else if (digits.length < 10) {
+    // Too few digits - invalid
+    console.error(`❌ Invalid phone number: too short (${digits.length} digits)`);
+    return null;
+  }
+  
+  // Final validation: Indian numbers must be exactly 12 digits starting with 91
+  if (digits.length !== 12 || !digits.startsWith('91')) {
+    console.error(`❌ Invalid Indian phone number format: ${digits} (length: ${digits.length})`);
+    return null;
+  }
+  
+  // WhatsApp API requires + prefix
+  // Return format: +919876543210
+  return `+${digits}`;
+}
+
 // Send WhatsApp Message Function
 async function sendWhatsAppMessage(to, message) {
   const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
   
+  if (!PHONE_NUMBER_ID || !ACCESS_TOKEN) {
+    console.log('⚠️ WhatsApp credentials not configured');
+    return;
+  }
+  
   const url = `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`;
+  
+  // Format phone number with + prefix (required by WhatsApp API)
+  const formattedTo = formatPhoneNumber(to);
+  if (!formattedTo) {
+    console.error('❌ Invalid phone number:', to);
+    return;
+  }
   
   try {
     const response = await axios.post(url, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: to, // Format: 919876543210 (no + or spaces)
+      to: formattedTo, // Format: +919876543210 (with + prefix)
       type: 'text',
       text: {
         preview_url: false,
@@ -152,10 +238,7 @@ const razorpay = new Razorpay({
 // ------------------------------------------------------------
 // Utilities
 // ------------------------------------------------------------
-function formatPhoneNumber(phone) {
-  const digits = `${phone}`.replace(/\D/g, '');
-  return digits.startsWith('91') ? digits : `91${digits}`;
-}
+// formatPhoneNumber is defined at the top of the file
 
 function generateOrderNumber() {
   return `UE${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -246,9 +329,17 @@ async function sendListMessage(phoneNumber, bodyText, buttonText, sections) {
 // Chatbot Flow
 // ------------------------------------------------------------
 async function updateConversationState(phoneNumber, step, data) {
+  if (!phoneNumber) {
+    console.error('❌ updateConversationState called with no phone number');
+    return;
+  }
+  
+  // Format phone number for database (store without + for consistency)
+  const phoneForDB = phoneNumber.replace(/^\+/, ''); // Remove + if present for DB storage
+  
   const request = pool.request();
   await request
-    .input('phone', sql.NVarChar, phoneNumber)
+    .input('phone', sql.NVarChar, phoneForDB)
     .input('step', sql.NVarChar, step)
     .input('data', sql.NVarChar, JSON.stringify(data || {}))
     .query(`
@@ -278,11 +369,15 @@ async function handleNameStep(phoneNumber, messageText, stateData) {
     return;
   }
 
-  const formattedPhone = formatPhoneNumber(phoneNumber);
+  // Format phone for database (without +)
+  const phoneForDB = phoneNumber.replace(/^\+/, '');
+  // Format phone for WhatsApp API (with +)
+  const formattedPhoneForAPI = formatPhoneNumber(phoneNumber);
+  
   await pool
     .request()
     .input('name', sql.NVarChar, name)
-    .input('phone', sql.NVarChar, formattedPhone)
+    .input('phone', sql.NVarChar, phoneForDB)
     .query(`
       IF NOT EXISTS (SELECT 1 FROM Users WHERE PhoneNumber = @phone)
         INSERT INTO Users (FullName, PhoneNumber) VALUES (@name, @phone)
@@ -442,10 +537,11 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
     return;
   }
 
-  const formattedPhone = formatPhoneNumber(phoneNumber);
+  // Format phone for database (without +)
+  const phoneForDB = phoneNumber.replace(/^\+/, '');
   const userResult = await pool
     .request()
-    .input('phone', sql.NVarChar, formattedPhone)
+    .input('phone', sql.NVarChar, phoneForDB)
     .query('SELECT UserID FROM Users WHERE PhoneNumber = @phone;');
 
   if (!userResult.recordset.length) {
@@ -488,15 +584,24 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
 
 async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
   try {
+    // Validate phone number
+    if (!phoneNumber) {
+      console.error('❌ processWhatsAppMessage called with no phone number');
+      return;
+    }
+
     // Interactive replies overwrite messageText
     if (messageObj?.type === 'interactive') {
       if (messageObj.interactive?.button_reply) messageText = messageObj.interactive.button_reply.id;
       if (messageObj.interactive?.list_reply) messageText = messageObj.interactive.list_reply.id;
     }
 
+    // Format phone number for database (store without + for consistency)
+    const phoneForDB = phoneNumber.replace(/^\+/, ''); // Remove + if present for DB storage
+
     const stateResult = await pool
       .request()
-      .input('phone', sql.NVarChar, phoneNumber)
+      .input('phone', sql.NVarChar, phoneForDB)
       .query('SELECT * FROM ConversationState WHERE PhoneNumber = @phone;');
 
     let currentStep = 'welcome';
@@ -562,10 +667,13 @@ app.post('/api/users', async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Name and phone required' });
     }
 
-    const phone = formatPhoneNumber(phoneNumber);
+    // Format phone for database (without +)
+    const phoneForDB = phoneNumber.replace(/\D/g, ''); // Remove all non-digits
+    const phoneForDBWithCountry = phoneForDB.startsWith('91') ? phoneForDB : `91${phoneForDB}`;
+    
     const existing = await pool
       .request()
-      .input('phone', sql.NVarChar, phone)
+      .input('phone', sql.NVarChar, phoneForDBWithCountry)
       .query('SELECT TOP 1 * FROM Users WHERE PhoneNumber = @phone;');
 
     if (existing.recordset.length) {
@@ -575,7 +683,7 @@ app.post('/api/users', async (req, res, next) => {
     const result = await pool
       .request()
       .input('name', sql.NVarChar, fullName)
-      .input('phone', sql.NVarChar, phone)
+      .input('phone', sql.NVarChar, phoneForDBWithCountry)
       .input('email', sql.NVarChar, email || null)
       .query(`
         INSERT INTO Users (FullName, PhoneNumber, Email)
@@ -913,19 +1021,44 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
   try {
     const body = req.body;
-    const message =
-      body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] ||
-      body?.entry?.[0]?.changes?.[0]?.value?.statuses?.[0];
+    
+    // Handle different webhook event types
+    const entry = body?.entry?.[0];
+    if (!entry) return;
 
-    if (!message) return;
+    const changes = entry.changes?.[0];
+    if (!changes) return;
 
-    const from = message.from;
-    const text = message.text?.body || message.button?.text || '';
-    console.log(`📱 Incoming WhatsApp from ${from}: ${text}`);
-
-    await processWhatsAppMessage(from, text, message);
+    const value = changes.value;
+    
+    // Check if this is a message (not a status update)
+    const message = value?.messages?.[0];
+    
+    if (message) {
+      // This is an incoming message
+      // WhatsApp sends phone numbers with country code (e.g., "919876543210" or "+919876543210")
+      const from = message.from;
+      const text = message.text?.body || message.button?.text || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || '';
+      
+      if (!from) {
+        console.error('❌ No phone number in message:', JSON.stringify(message, null, 2));
+        return;
+      }
+      
+      // Log the raw phone number format from WhatsApp
+      console.log(`📱 Incoming WhatsApp from ${from} (raw format): ${text}`);
+      
+      // Process the message - formatPhoneNumber will handle the conversion
+      await processWhatsAppMessage(from, text, message);
+    } else if (value?.statuses?.[0]) {
+      // This is a status update (message delivered, read, etc.)
+      const status = value.statuses[0];
+      console.log(`📊 Message status update: ${status.status} for ${status.id}`);
+      // Status updates don't need processing, just log them
+    }
   } catch (err) {
     console.error('Webhook processing error:', err.message);
+    console.error('Error stack:', err.stack);
   }
 });
 
