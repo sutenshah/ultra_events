@@ -342,13 +342,133 @@ async function sendWhatsAppMessage(phoneNumber, message) {
 }
 
 async function sendButtonMessage(phoneNumber, bodyText, buttons) {
-  console.log(`📤 WhatsApp buttons → ${phoneNumber}: ${bodyText}`);
-  // Add API call when templates are approved
+  if (!phoneNumber) {
+    console.error('❌ sendButtonMessage called with no phone number');
+    return;
+  }
+
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!phoneId || !token) {
+    console.log('⚠️ WhatsApp credentials not configured');
+    return;
+  }
+
+  const formattedPhone = formatPhoneNumber(phoneNumber);
+  if (!formattedPhone) {
+    console.error(`❌ Invalid phone number format: ${phoneNumber}`);
+    return;
+  }
+
+  // WhatsApp Button Message (max 3 buttons)
+  const buttonArray = buttons.slice(0, 3).map((btn, index) => ({
+    type: 'reply',
+    reply: {
+      id: btn.id || `btn_${index}`,
+      title: btn.title || btn,
+    },
+  }));
+
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: formattedPhone,
+        type: 'interactive',
+        interactive: {
+          type: 'button',
+          body: {
+            text: bodyText,
+          },
+          action: {
+            buttons: buttonArray,
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    console.log('✅ Button message sent successfully');
+    return response.data;
+  } catch (err) {
+    console.error('WhatsApp button message error:', err.response?.data || err.message);
+    // Fallback to text message if button message fails
+    await sendWhatsAppMessage(phoneNumber, `${bodyText}\n\n${buttons.map(b => `• ${b.title || b}`).join('\n')}`);
+  }
 }
 
 async function sendListMessage(phoneNumber, bodyText, buttonText, sections) {
-  console.log(`📤 WhatsApp list → ${phoneNumber}: ${bodyText}`);
-  // Add API call when templates are approved
+  if (!phoneNumber) {
+    console.error('❌ sendListMessage called with no phone number');
+    return;
+  }
+
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!phoneId || !token) {
+    console.log('⚠️ WhatsApp credentials not configured');
+    return;
+  }
+
+  const formattedPhone = formatPhoneNumber(phoneNumber);
+  if (!formattedPhone) {
+    console.error(`❌ Invalid phone number format: ${phoneNumber}`);
+    return;
+  }
+
+  // WhatsApp List Message (max 10 items per section, max 1 section for simplicity)
+  const listSections = sections.slice(0, 1).map((section) => ({
+    title: section.title || 'Options',
+    rows: section.rows.slice(0, 10).map((row) => ({
+      id: row.id || `row_${Math.random()}`,
+      title: row.title || row,
+      description: row.description || '',
+    })),
+  }));
+
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: formattedPhone,
+        type: 'interactive',
+        interactive: {
+          type: 'list',
+          body: {
+            text: bodyText,
+          },
+          footer: {
+            text: 'Select an option from the list',
+          },
+          action: {
+            button: buttonText || 'Select',
+            sections: listSections,
+          },
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    console.log('✅ List message sent successfully');
+    return response.data;
+  } catch (err) {
+    console.error('WhatsApp list message error:', err.response?.data || err.message);
+    // Fallback to text message if list message fails
+    const textOptions = sections[0]?.rows.map(r => `• ${r.title}`).join('\n') || '';
+    await sendWhatsAppMessage(phoneNumber, `${bodyText}\n\n${textOptions}`);
+  }
 }
 
 // ------------------------------------------------------------
@@ -381,11 +501,75 @@ async function updateConversationState(phoneNumber, step, data) {
 }
 
 async function handleWelcomeStep(phoneNumber) {
+  // Send welcome message
   await sendWhatsAppMessage(
     phoneNumber,
-    'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
+    '👋 Hello! Welcome to Ultraa Events 🎉\n\nWe\'re excited to have you here! Let me show you our upcoming events.',
   );
-  await updateConversationState(phoneNumber, 'awaiting_name', {});
+
+  // Fetch and send event catalog immediately
+  try {
+    const events = await pool
+      .request()
+      .query(`
+        SELECT TOP 5 * FROM Events 
+        WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
+        ORDER BY EventDate ASC;
+      `);
+
+    if (events.recordset.length > 0) {
+      // Format events for list message
+      const eventRows = events.recordset.map((e, index) => {
+        const eventDate = new Date(e.EventDate);
+        const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        const eventTime = e.EventTime ? new Date(`2000-01-01T${e.EventTime}`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+        
+        // Add emoji based on event name or use default
+        let emoji = '🎉';
+        if (e.EventName.toLowerCase().includes('festival')) emoji = '🎉';
+        else if (e.EventName.toLowerCase().includes('dream')) emoji = '🎵';
+        else if (e.EventName.toLowerCase().includes('new year') || e.EventName.toLowerCase().includes('bash')) emoji = '🎆';
+        else if (e.EventName.toLowerCase().includes('electronic')) emoji = '🎵';
+        
+        return {
+          id: `event_${e.EventID}`,
+          title: `${emoji} ${e.EventName}`,
+          description: `📅 ${formattedDate} • ⏰ ${eventTime} • 📍 ${e.Venue.substring(0, 30)}`,
+        };
+      });
+
+      // Send event catalog as list message
+      await sendListMessage(
+        phoneNumber,
+        '🎊 Here are our upcoming events:\n\nSelect an event to view details and book tickets!',
+        'View Events',
+        [
+          {
+            title: 'Upcoming Events',
+            rows: eventRows,
+          },
+        ],
+      );
+
+      // Store events in state for later use
+      await updateConversationState(phoneNumber, 'awaiting_name', { events: events.recordset });
+    } else {
+      // No events available
+      await sendWhatsAppMessage(
+        phoneNumber,
+        '📭 No upcoming events right now. Check back soon!\n\nPlease share your full name to continue.',
+      );
+      await updateConversationState(phoneNumber, 'awaiting_name', {});
+    }
+  } catch (err) {
+    console.error('Error fetching events in welcome:', err);
+    // Fallback to simple welcome message
+    await sendWhatsAppMessage(
+      phoneNumber,
+      'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
+    );
+    await updateConversationState(phoneNumber, 'awaiting_name', {});
+  }
 }
 
 async function handleNameStep(phoneNumber, messageText, stateData) {
@@ -412,8 +596,10 @@ async function handleNameStep(phoneNumber, messageText, stateData) {
     `);
 
   stateData.name = name;
-  await sendButtonMessage(phoneNumber, `Great to meet you, ${name}!`, [
-    { id: 'view_events', title: '🎉 View Events' },
+  
+  // Send personalized greeting with buttons
+  await sendButtonMessage(phoneNumber, `Great! Nice to meet you, ${name}! 👋\n\nHow can we help you today?`, [
+    { id: 'view_events', title: '📅 View Events' },
     { id: 'support', title: '💬 Support' },
   ]);
   await updateConversationState(phoneNumber, 'main_menu', stateData);
@@ -422,7 +608,7 @@ async function handleNameStep(phoneNumber, messageText, stateData) {
 async function handleMainMenu(phoneNumber, messageText, stateData) {
   const lower = messageText.toLowerCase();
 
-  if (lower === 'view_events' || lower.includes('event')) {
+  if (lower === 'view_events' || lower.includes('event') || lower === 'view_events') {
     const events = await pool
       .request()
       .query(`
@@ -432,23 +618,40 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
       `);
 
     if (events.recordset.length === 0) {
-      await sendWhatsAppMessage(phoneNumber, 'No upcoming events right now. Check back soon!');
+      await sendWhatsAppMessage(phoneNumber, '📭 No upcoming events right now. Check back soon!');
       return;
     }
 
     stateData.events = events.recordset;
+    
+    // Format events with emojis and nice descriptions
+    const eventRows = events.recordset.map((e) => {
+      const eventDate = new Date(e.EventDate);
+      const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      const eventTime = e.EventTime ? new Date(`2000-01-01T${e.EventTime}`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+      
+      // Add emoji based on event name
+      let emoji = '🎉';
+      if (e.EventName.toLowerCase().includes('festival')) emoji = '🎉';
+      else if (e.EventName.toLowerCase().includes('dream')) emoji = '🎵';
+      else if (e.EventName.toLowerCase().includes('new year') || e.EventName.toLowerCase().includes('bash')) emoji = '🎆';
+      else if (e.EventName.toLowerCase().includes('electronic')) emoji = '🎵';
+      
+      return {
+        id: `event_${e.EventID}`,
+        title: `${emoji} ${e.EventName}`,
+        description: `📅 ${formattedDate} • ⏰ ${eventTime} • 📍 ${e.Venue.substring(0, 30)}`,
+      };
+    });
+
     const sections = [
       {
         title: 'Upcoming Events',
-        rows: events.recordset.map((e) => ({
-          id: `event_${e.EventID}`,
-          title: e.EventName.substring(0, 20),
-          description: `${new Date(e.EventDate).toLocaleDateString()} • ${e.Venue.substring(0, 35)}`,
-        })),
+        rows: eventRows,
       },
     ];
 
-    await sendListMessage(phoneNumber, 'Choose an event to view details.', 'Select', sections);
+    await sendListMessage(phoneNumber, '🎊 Here are our upcoming events:\n\nSelect an event to view details and book tickets!', 'Select Event', sections);
     await updateConversationState(phoneNumber, 'viewing_events', stateData);
     return;
   }
@@ -456,12 +659,15 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
   if (lower === 'support') {
     await sendWhatsAppMessage(
       phoneNumber,
-      '📞 Support\nEmail: support@ultraaevents.com\nPhone: +91 98765 43210\nHours: 9 AM - 9 PM (Mon-Sat)',
+      '💬 Contact Support\n\n📧 Email: support@ultraaevents.com\n📞 Phone: +91 98765 43210\n⏰ Hours: 9 AM - 9 PM (Mon-Sat)\n\nWe\'re here to help!',
     );
     return;
   }
 
-  await sendWhatsAppMessage(phoneNumber, "Type 'View Events' to browse or 'Support' for help.");
+  await sendButtonMessage(phoneNumber, "How can we help you today?", [
+    { id: 'view_events', title: '📅 View Events' },
+    { id: 'support', title: '💬 Support' },
+  ]);
 }
 
 async function handleEventSelection(phoneNumber, messageText, stateData) {
@@ -492,66 +698,116 @@ async function handleEventSelection(phoneNumber, messageText, stateData) {
 
   const event = eventResult.recordset[0];
   if (!event) {
-    await sendWhatsAppMessage(phoneNumber, 'Event not found.');
+    await sendWhatsAppMessage(phoneNumber, '❌ Event not found.');
     return;
   }
 
   stateData.selectedEventId = eventId;
   stateData.tickets = ticketResult.recordset;
 
-  const details =
-    `🎉 ${event.EventName}\n` +
-    `📅 ${event.EventDate}  ⏰ ${event.EventTime}\n` +
-    `📍 ${event.Venue}\n\n` +
-    `${event.Description || ''}\n\n` +
-    "Reply 'YES' to see tickets or 'BACK' to main menu.";
+  // Format event details nicely with emojis
+  const eventDate = new Date(event.EventDate);
+  const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const eventTime = event.EventTime ? new Date(`2000-01-01T${event.EventTime}`).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+  
+  // Add emoji based on event name
+  let emoji = '🎉';
+  if (event.EventName.toLowerCase().includes('festival')) emoji = '🎉';
+  else if (event.EventName.toLowerCase().includes('dream')) emoji = '🎵';
+  else if (event.EventName.toLowerCase().includes('new year') || event.EventName.toLowerCase().includes('bash')) emoji = '🎆';
+  else if (event.EventName.toLowerCase().includes('electronic')) emoji = '🎵';
 
-  await sendWhatsAppMessage(phoneNumber, details);
+  const details =
+    `${emoji} *${event.EventName}*\n\n` +
+    `📅 Date: ${formattedDate}\n` +
+    `⏰ Time: ${eventTime}\n` +
+    `📍 Venue: ${event.Venue}\n\n` +
+    `${event.Description || '🎊 Experience the ultimate party with live DJs, premium bars, and electrifying atmosphere!'}\n\n` +
+    `Would you like to purchase a ticket?`;
+
+  // Send event details with buttons
+  await sendButtonMessage(phoneNumber, details, [
+    { id: 'yes_buy_ticket', title: '✅ Yes, Buy Ticket' },
+    { id: 'view_other_events', title: '📅 View Other Events' },
+  ]);
   await updateConversationState(phoneNumber, 'viewing_event_details', stateData);
 }
 
 async function handleEventDetails(phoneNumber, messageText, stateData) {
   const lower = messageText.toLowerCase();
 
-  if (lower === 'yes' || lower === 'buy' || lower === 'purchase') {
+  if (lower === 'yes' || lower === 'buy' || lower === 'purchase' || lower === 'yes_buy_ticket') {
     if (!stateData.tickets?.length) {
-      await sendWhatsAppMessage(phoneNumber, 'Tickets are not available for this event.');
+      await sendWhatsAppMessage(phoneNumber, '❌ Tickets are not available for this event.');
       return;
     }
 
-    let msg = 'Select your ticket type:\n\n';
-    stateData.tickets.forEach((t, i) => {
-      msg += `${i + 1}. ${t.TicketName} - ₹${t.Price} (${t.AvailableQuantity} left)\n`;
-    });
-    msg += "\nReply with the ticket number.";
+    // Format tickets as list message
+    const ticketRows = stateData.tickets.map((t, i) => ({
+      id: `ticket_${t.TicketTypeID}`,
+      title: `🎫 ${t.TicketName} - ₹${t.Price}`,
+      description: `${t.AvailableQuantity} tickets available`,
+    }));
 
-    await sendWhatsAppMessage(phoneNumber, msg);
+    await sendListMessage(
+      phoneNumber,
+      '🎫 Great! Please select your ticket type:',
+      'Select Ticket',
+      [
+        {
+          title: 'Ticket Types',
+          rows: ticketRows,
+        },
+      ],
+    );
     await updateConversationState(phoneNumber, 'selecting_ticket', stateData);
     return;
   }
 
-  if (lower === 'back') {
+  if (lower === 'back' || lower === 'view_other_events') {
     await handleMainMenu(phoneNumber, 'view_events', stateData);
     return;
   }
 
-  await sendWhatsAppMessage(phoneNumber, "Please reply 'YES' to continue or 'BACK' to go back.");
+  await sendButtonMessage(phoneNumber, "Would you like to purchase a ticket?", [
+    { id: 'yes_buy_ticket', title: '✅ Yes, Buy Ticket' },
+    { id: 'view_other_events', title: '📅 View Other Events' },
+  ]);
 }
 
 async function handleTicketSelection(phoneNumber, messageText, stateData) {
-  const idx = parseInt(messageText, 10) - 1;
-  if (Number.isNaN(idx) || !stateData.tickets?.[idx]) {
-    await sendWhatsAppMessage(phoneNumber, 'Invalid ticket choice. Please try again.');
+  // Handle both list reply (ticket_123) and text reply (1, 2, 3, etc.)
+  let ticketId = null;
+  
+  if (messageText.startsWith('ticket_')) {
+    // From list message selection
+    ticketId = parseInt(messageText.replace('ticket_', ''), 10);
+    const ticket = stateData.tickets?.find(t => t.TicketTypeID === ticketId);
+    if (ticket) {
+      stateData.selectedTicketId = ticket.TicketTypeID;
+      stateData.selectedTicketPrice = ticket.Price;
+    }
+  } else {
+    // From text reply (number)
+    const idx = parseInt(messageText, 10) - 1;
+    if (!Number.isNaN(idx) && stateData.tickets?.[idx]) {
+      const ticket = stateData.tickets[idx];
+      stateData.selectedTicketId = ticket.TicketTypeID;
+      stateData.selectedTicketPrice = ticket.Price;
+      ticketId = ticket.TicketTypeID;
+    }
+  }
+
+  if (!stateData.selectedTicketId || !stateData.selectedTicketPrice) {
+    await sendWhatsAppMessage(phoneNumber, '❌ Invalid ticket choice. Please try again.');
     return;
   }
 
-  const ticket = stateData.tickets[idx];
-  stateData.selectedTicketId = ticket.TicketTypeID;
-  stateData.selectedTicketPrice = ticket.Price;
+  const selectedTicket = stateData.tickets.find(t => t.TicketTypeID === stateData.selectedTicketId);
 
   await sendWhatsAppMessage(
     phoneNumber,
-    `You selected ${ticket.TicketName} - ₹${ticket.Price}\nPlease share your email to receive the ticket.`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\nPlease provide your email address where we can send your ticket:`,
   );
   await updateConversationState(phoneNumber, 'awaiting_email', stateData);
 }
@@ -657,7 +913,19 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
         await handleMainMenu(phoneNumber, messageText, stateData);
         break;
       case 'viewing_events':
-        await handleEventSelection(phoneNumber, messageText, stateData);
+        // Handle list reply (event_123) or text reply
+        if (messageText.startsWith('event_')) {
+          await handleEventSelection(phoneNumber, messageText, stateData);
+        } else {
+          // Try to parse as number
+          const eventNum = parseInt(messageText, 10);
+          if (!Number.isNaN(eventNum) && stateData.events?.[eventNum - 1]) {
+            const eventId = stateData.events[eventNum - 1].EventID;
+            await handleEventSelection(phoneNumber, `event_${eventId}`, stateData);
+          } else {
+            await handleEventSelection(phoneNumber, messageText, stateData);
+          }
+        }
         break;
       case 'viewing_event_details':
         await handleEventDetails(phoneNumber, messageText, stateData);
