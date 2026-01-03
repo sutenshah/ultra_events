@@ -1109,18 +1109,49 @@ async function handleEventSelection(phoneNumber, messageText, stateData) {
   // Format time - Use time string directly from database
   let eventTime = '';
   if (event.EventTime) {
-    // Get time as string from database (format: HH:MM:SS or HH:MM)
-    const timeStr = event.EventTime.toString().trim();
-    // Remove seconds if present (HH:MM:SS -> HH:MM)
-    if (timeStr.includes(':')) {
-      const parts = timeStr.split(':');
-      if (parts.length >= 2) {
-        eventTime = `${parts[0]}:${parts[1]}`; // Just HH:MM
+    try {
+      // Handle different formats: Date object, Time string, or Time object
+      let timeStr = '';
+      
+      if (event.EventTime instanceof Date) {
+        // If it's a Date object, extract just the time part
+        const hours = String(event.EventTime.getHours()).padStart(2, '0');
+        const minutes = String(event.EventTime.getMinutes()).padStart(2, '0');
+        eventTime = `${hours}:${minutes}`;
       } else {
-        eventTime = timeStr;
+        // It's a string or Time type from SQL
+        timeStr = String(event.EventTime).trim();
+        
+        // Remove any date part if present (e.g., "Thu Jan 01 1970 21:00:00 GMT+0000" -> "21:00")
+        if (timeStr.includes('GMT') || timeStr.includes('1970') || timeStr.includes('UTC') || timeStr.includes('Jan 01 1970')) {
+          // Extract time from date string using regex - look for HH:MM pattern
+          const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
+          if (timeMatch) {
+            const hours = String(parseInt(timeMatch[1], 10)).padStart(2, '0');
+            const minutes = timeMatch[2];
+            eventTime = `${hours}:${minutes}`;
+            console.log(`✅ Extracted time from date string: "${timeStr}" -> "${eventTime}"`);
+          } else {
+            console.warn('⚠️ Could not extract time from:', timeStr);
+            eventTime = timeStr;
+          }
+        } else if (timeStr.includes(':')) {
+          // Normal time format (HH:MM:SS or HH:MM)
+          const parts = timeStr.split(':');
+          if (parts.length >= 2) {
+            const hours = String(parseInt(parts[0], 10)).padStart(2, '0');
+            const minutes = parts[1];
+            eventTime = `${hours}:${minutes}`;
+          } else {
+            eventTime = timeStr;
+          }
+        } else {
+          eventTime = timeStr;
+        }
       }
-    } else {
-      eventTime = timeStr;
+    } catch (err) {
+      console.warn('⚠️ Error formatting time:', event.EventTime, err.message);
+      eventTime = String(event.EventTime);
     }
   }
   
@@ -1486,7 +1517,7 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
   // Send WhatsApp message with valid Razorpay payment link
   await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\n💳 *Pay Now:*\n${paymentLink}\n\nClick the link above to complete your payment securely via Razorpay.`,
+    `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\n💳 *Pay Now:*\n${paymentLink}\n\nClick the link above to complete your payment securely via Razorpay.\n\n✅ You'll receive confirmation once payment is successful.`,
   );
 
   await updateConversationState(phoneNumber, 'main_menu', {});
@@ -2221,47 +2252,75 @@ app.post('/webhook/razorpay', async (req, res) => {
   }
 });
 
-// Payment callback handler (for payment links)
+// Payment callback handler (for payment links) - Razorpay redirects here after payment
 app.get('/payment/callback', async (req, res) => {
-  console.log('📥 Payment callback received:', JSON.stringify(req.query, null, 2));
+  console.log('📥 Payment callback received from Razorpay:', JSON.stringify(req.query, null, 2));
+  console.log('📥 Full request:', JSON.stringify({ query: req.query, params: req.params, body: req.body }, null, 2));
+  
   try {
-    const { payment_id, payment_link_id, order_id, razorpay_payment_id, razorpay_payment_link_id, razorpay_order_id } = req.query;
+    // Razorpay sends these parameters in the callback URL
+    const { 
+      payment_id, 
+      payment_link_id, 
+      order_id,
+      razorpay_payment_id,
+      razorpay_payment_link_id,
+      razorpay_order_id,
+      status,
+      razorpay_signature
+    } = req.query;
     
-    // Support multiple parameter names
+    // Support multiple parameter name formats
     const actualPaymentId = payment_id || razorpay_payment_id;
     const actualPaymentLinkId = payment_link_id || razorpay_payment_link_id;
     const actualOrderId = order_id || razorpay_order_id;
+    const paymentStatus = status;
     
-    console.log('🔍 Payment callback params:', { actualPaymentId, actualPaymentLinkId, actualOrderId });
+    console.log('🔍 Extracted params:', { 
+      actualPaymentId, 
+      actualPaymentLinkId, 
+      actualOrderId, 
+      paymentStatus 
+    });
     
-    if (!actualPaymentId) {
-      console.warn('⚠️ No payment ID in callback');
-      return res.status(400).send('Payment ID missing');
+    // If payment failed or cancelled
+    if (paymentStatus === 'failed' || paymentStatus === 'cancelled') {
+      console.log('❌ Payment failed or cancelled:', paymentStatus);
+      const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+      return res.redirect(`${frontendUrl}/payment/error?status=${paymentStatus}`);
     }
     
-    // Find order by payment link ID
+    // Find order by payment link ID (this is what we stored)
     let orderResult = null;
     
     if (actualPaymentLinkId) {
-      console.log('🔍 Searching by payment link ID:', actualPaymentLinkId);
+      console.log('🔍 Searching order by payment link ID:', actualPaymentLinkId);
       orderResult = await pool
         .request()
         .input('razorpayOrderId', sql.NVarChar, actualPaymentLinkId)
         .query('SELECT * FROM Orders WHERE RazorpayOrderID = @razorpayOrderId AND Status = \'pending\';');
+      
+      if (orderResult.recordset.length > 0) {
+        console.log('✅ Found order by payment link ID');
+      }
     }
     
-    // If not found, search all pending orders
+    // If not found, search all recent pending orders
     if (!orderResult || !orderResult.recordset.length) {
       console.log('🔍 Searching all pending orders...');
       const allPendingOrders = await pool
         .request()
         .query('SELECT * FROM Orders WHERE Status = \'pending\' ORDER BY OrderID DESC;');
       
+      console.log(`📋 Found ${allPendingOrders.recordset.length} pending orders`);
+      
       if (actualPaymentLinkId) {
         for (const order of allPendingOrders.recordset) {
-          if (order.RazorpayOrderID === actualPaymentLinkId || order.RazorpayOrderID?.includes(actualPaymentLinkId)) {
+          if (order.RazorpayOrderID === actualPaymentLinkId || 
+              order.RazorpayOrderID?.includes(actualPaymentLinkId) ||
+              order.RazorpayOrderID?.endsWith(actualPaymentLinkId)) {
             orderResult = { recordset: [order] };
-            console.log('✅ Found order by matching payment link ID');
+            console.log('✅ Found order by matching payment link ID:', order.OrderNumber);
             break;
           }
         }
@@ -2270,23 +2329,180 @@ app.get('/payment/callback', async (req, res) => {
     
     if (orderResult && orderResult.recordset.length > 0) {
       const order = orderResult.recordset[0];
-      console.log('✅ Processing payment for order:', order.OrderNumber);
-      await processPaymentSuccess(order.OrderID, actualPaymentId);
       
-      // Redirect to success page
-      const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
-      return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
+      // Verify payment status with Razorpay API before processing
+      if (actualPaymentId) {
+        try {
+          const keyId = process.env.RAZORPAY_KEY_ID;
+          const keySecret = process.env.RAZORPAY_KEY_SECRET;
+          
+          // Get payment details from Razorpay to verify
+          const paymentResponse = await axios.get(
+            `https://api.razorpay.com/v1/payments/${actualPaymentId}`,
+            {
+              auth: {
+                username: keyId,
+                password: keySecret,
+              },
+            }
+          );
+          
+          const payment = paymentResponse.data;
+          console.log('📊 Payment status from Razorpay:', payment.status);
+          
+          if (payment.status === 'captured' || payment.status === 'authorized') {
+            console.log('✅ Payment verified! Processing order:', order.OrderNumber);
+            await processPaymentSuccess(order.OrderID, actualPaymentId);
+            
+            // Redirect to success page
+            const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+            return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
+          } else {
+            console.log('⚠️ Payment not captured yet. Status:', payment.status);
+            const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+            return res.redirect(`${frontendUrl}/payment/pending?order=${order.OrderNumber}`);
+          }
+        } catch (razorpayErr) {
+          console.error('❌ Error verifying payment with Razorpay:', razorpayErr.response?.data || razorpayErr.message);
+          // Still process if we have payment ID (callback indicates success)
+          if (actualPaymentId && paymentStatus !== 'failed') {
+            console.log('⚠️ Processing payment despite verification error (callback indicates success)');
+            await processPaymentSuccess(order.OrderID, actualPaymentId);
+            const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+            return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
+          }
+        }
+      } else {
+        console.warn('⚠️ No payment ID in callback, but order found');
+      }
+    } else {
+      console.warn('⚠️ Order not found for payment callback');
+      console.warn('⚠️ Payment link ID:', actualPaymentLinkId);
+      console.warn('⚠️ Payment ID:', actualPaymentId);
     }
     
-    // If order not found, show error
+    // If order not found or payment failed
     const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
     return res.redirect(`${frontendUrl}/payment/error`);
   } catch (err) {
     console.error('❌ Payment callback error:', err.message);
+    console.error('❌ Error stack:', err.stack);
     const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
     return res.redirect(`${frontendUrl}/payment/error`);
   }
 });
+
+// Function to check payment status from Razorpay and process if successful
+async function checkAndProcessPayment(paymentLinkId, orderNumber) {
+  try {
+    console.log(`🔍 Checking payment status for link: ${paymentLinkId}, order: ${orderNumber}`);
+    
+    // Find order
+    const orderResult = await pool
+      .request()
+      .input('razorpayOrderId', sql.NVarChar, paymentLinkId)
+      .query('SELECT * FROM Orders WHERE RazorpayOrderID = @razorpayOrderId;');
+    
+    if (!orderResult.recordset.length) {
+      console.log('⚠️ Order not found for payment link:', paymentLinkId);
+      return;
+    }
+    
+    const order = orderResult.recordset[0];
+    
+    // Skip if already processed
+    if (order.Status === 'completed') {
+      console.log('✅ Order already completed:', orderNumber);
+      return;
+    }
+    
+    // Check payment status via Razorpay API
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    
+    try {
+      const paymentLinkResponse = await axios.get(
+        `https://api.razorpay.com/v1/payment_links/${paymentLinkId}`,
+        {
+          auth: {
+            username: keyId,
+            password: keySecret,
+          },
+        }
+      );
+      
+      const paymentLink = paymentLinkResponse.data;
+      console.log(`📊 Payment link status: ${paymentLink.status}`);
+      
+      // Check if payment link is paid
+      if (paymentLink.status === 'paid') {
+        const payments = paymentLink.payments || [];
+        
+        if (payments.length > 0) {
+          const successfulPayment = payments.find(p => p.status === 'captured') || payments[0];
+          
+          if (successfulPayment && successfulPayment.status === 'captured') {
+            const paymentId = successfulPayment.id;
+            console.log(`✅ Payment successful! Processing order ${orderNumber} with payment ID: ${paymentId}`);
+            await processPaymentSuccess(order.OrderID, paymentId);
+            return;
+          }
+        }
+      }
+      
+      console.log(`⏳ Payment not completed yet for order ${orderNumber}. Status: ${paymentLink.status}`);
+    } catch (razorpayErr) {
+      console.error('❌ Error checking Razorpay payment:', razorpayErr.response?.data || razorpayErr.message);
+    }
+  } catch (err) {
+    console.error('❌ Error in checkAndProcessPayment:', err.message);
+  }
+}
+
+// Background job: Periodically check pending payments (fallback only - runs every 10 minutes)
+// This is a backup in case callback fails
+async function checkPendingPayments() {
+  try {
+    console.log('🔄 Background check: Checking pending payments (fallback)...');
+    
+    // Get all pending orders with payment links (older than 5 minutes to avoid duplicate processing)
+    const pendingOrders = await pool
+      .request()
+      .query(`
+        SELECT OrderID, OrderNumber, RazorpayOrderID, CreatedAt
+        FROM Orders 
+        WHERE Status = 'pending' 
+          AND RazorpayOrderID LIKE 'plink_%'
+          AND CreatedAt > DATEADD(hour, -24, GETDATE())
+          AND CreatedAt < DATEADD(minute, -5, GETDATE())
+        ORDER BY OrderID DESC;
+      `);
+    
+    if (pendingOrders.recordset.length === 0) {
+      return; // No pending payments
+    }
+    
+    console.log(`📋 Found ${pendingOrders.recordset.length} pending orders (fallback check)`);
+    
+    for (const order of pendingOrders.recordset) {
+      try {
+        await checkAndProcessPayment(order.RazorpayOrderID, order.OrderNumber);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (err) {
+        console.error(`❌ Error checking order ${order.OrderNumber}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error in checkPendingPayments:', err.message);
+  }
+}
+
+// Run payment check every 10 minutes (fallback only)
+setInterval(() => {
+  checkPendingPayments().catch(err => {
+    console.error('❌ Background payment check error:', err.message);
+  });
+}, 600000); // 10 minutes - only as fallback
 
 // Helper function to process successful payment
 async function processPaymentSuccess(orderId, paymentId) {
