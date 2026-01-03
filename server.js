@@ -174,7 +174,7 @@ app.get('/test-whatsapp', async (req, res) => {
 // SQL Server Connection
 // Supports both connection string and individual parameters
 // ------------------------------------------------------------
-let sqlConfig;
+/*let sqlConfig;
 
 // Option 1: Use connection string if provided
 if (process.env.SQL_CONNECTION_STRING) {
@@ -219,6 +219,48 @@ if (process.env.SQL_CONNECTION_STRING) {
       min: 0,
       idleTimeoutMillis: 30000,
       acquireTimeoutMillis: 30000, // Time to wait for connection from pool
+    },
+  };
+}
+
+let pool;*/
+
+let sqlConfig;
+
+// Option 1: Use connection string if provided
+if (process.env.SQL_CONNECTION_STRING) {
+  // Parse connection string format: "Server=...;Database=...;User Id=...;Password=...;Port=..."
+  const connStr = process.env.SQL_CONNECTION_STRING;
+  sqlConfig = {
+    connectionString: connStr,
+    options: {
+      encrypt: process.env.SQL_ENCRYPT === 'true' || connStr.includes('Encrypt=True'),
+      trustServerCertificate: true,
+      enableArithAbort: true,
+    },
+    pool: {
+      max: 10,
+      min: 0,
+      idleTimeoutMillis: 30000,
+    },
+  };
+} else {
+  // Option 2: Use individual parameters (recommended)
+  sqlConfig = {
+    server: process.env.SQL_SERVER || process.env.SQL_DATA_SOURCE,
+    database: process.env.SQL_DATABASE || process.env.SQL_INITIAL_CATALOG,
+    user: process.env.SQL_USER || process.env.SQL_USER_ID,
+    password: process.env.SQL_PASSWORD,
+    port: parseInt(process.env.SQL_PORT || '1433', 10),
+    options: {
+      encrypt: process.env.SQL_ENCRYPT === 'true',
+      trustServerCertificate: process.env.SQL_TRUST_SERVER_CERTIFICATE !== 'false',
+      enableArithAbort: true,
+    },
+    pool: {
+      max: 10,
+      min: 0,
+      idleTimeoutMillis: 30000,
     },
   };
 }
