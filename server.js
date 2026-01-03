@@ -479,26 +479,15 @@ async function sendButtonMessage(phoneNumber, bodyText, buttons) {
   }
 
   // WhatsApp Button Message (max 3 buttons)
-  // Support both reply buttons and URL buttons
-  const buttonArray = buttons.slice(0, 3).map((btn, index) => {
-    if (btn.url) {
-      // URL button - opens external link
-      return {
-        type: 'url',
-        url: btn.url,
-        title: btn.title || btn,
-      };
-    } else {
-      // Reply button - sends message back
-      return {
-        type: 'reply',
-        reply: {
-          id: btn.id || `btn_${index}`,
-          title: btn.title || btn,
-        },
-      };
-    }
-  });
+  // Note: WhatsApp only supports "reply" type buttons, not URL buttons
+  // URL buttons are not supported in button messages
+  const buttonArray = buttons.slice(0, 3).map((btn, index) => ({
+    type: 'reply',
+    reply: {
+      id: btn.id || `btn_${index}`,
+      title: btn.title || btn,
+    },
+  }));
 
   try {
     const response = await axios.post(
@@ -737,12 +726,23 @@ async function handleWelcomeStep(phoneNumber) {
         if (e.EventTime) {
           try {
             // Handle TIME format (HH:MM:SS or HH:MM)
-            const timeStr = e.EventTime.toString();
-            const [hours, minutes] = timeStr.split(':');
-            const hour24 = parseInt(hours, 10);
-            const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-            const ampm = hour24 >= 12 ? 'PM' : 'AM';
-            eventTime = `${hour12}:${minutes} ${ampm}`;
+            const timeStr = e.EventTime.toString().trim();
+            const parts = timeStr.split(':');
+            if (parts.length >= 2) {
+              const hour24 = parseInt(parts[0], 10);
+              const minutes = parts[1];
+              
+              // Validate hour and minutes
+              if (!isNaN(hour24) && hour24 >= 0 && hour24 <= 23 && minutes) {
+                const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
+                const ampm = hour24 >= 12 ? 'PM' : 'AM';
+                eventTime = `${hour12}:${minutes} ${ampm}`;
+              } else {
+                eventTime = timeStr; // Fallback to original
+              }
+            } else {
+              eventTime = timeStr; // Fallback to original
+            }
           } catch (err) {
             console.warn('⚠️ Error formatting time:', e.EventTime, err.message);
             eventTime = e.EventTime.toString();
@@ -956,12 +956,23 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
       if (e.EventTime) {
         try {
           // Handle TIME format (HH:MM:SS or HH:MM)
-          const timeStr = e.EventTime.toString();
-          const [hours, minutes] = timeStr.split(':');
-          const hour24 = parseInt(hours, 10);
-          const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-          const ampm = hour24 >= 12 ? 'PM' : 'AM';
-          eventTime = `${hour12}:${minutes} ${ampm}`;
+          const timeStr = e.EventTime.toString().trim();
+          const parts = timeStr.split(':');
+          if (parts.length >= 2) {
+            const hour24 = parseInt(parts[0], 10);
+            const minutes = parts[1];
+            
+            // Validate hour and minutes
+            if (!isNaN(hour24) && hour24 >= 0 && hour24 <= 23 && minutes) {
+              const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
+              const ampm = hour24 >= 12 ? 'PM' : 'AM';
+              eventTime = `${hour12}:${minutes} ${ampm}`;
+            } else {
+              eventTime = timeStr; // Fallback to original
+            }
+          } else {
+            eventTime = timeStr; // Fallback to original
+          }
         } catch (err) {
           console.warn('⚠️ Error formatting time:', e.EventTime, err.message);
           eventTime = e.EventTime.toString();
@@ -1080,12 +1091,23 @@ async function handleEventSelection(phoneNumber, messageText, stateData) {
   if (event.EventTime) {
     try {
       // Handle TIME format (HH:MM:SS or HH:MM)
-      const timeStr = event.EventTime.toString();
-      const [hours, minutes] = timeStr.split(':');
-      const hour24 = parseInt(hours, 10);
-      const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-      const ampm = hour24 >= 12 ? 'PM' : 'AM';
-      eventTime = `${hour12}:${minutes} ${ampm}`;
+      const timeStr = event.EventTime.toString().trim();
+      const parts = timeStr.split(':');
+      if (parts.length >= 2) {
+        const hour24 = parseInt(parts[0], 10);
+        const minutes = parts[1];
+        
+        // Validate hour and minutes
+        if (!isNaN(hour24) && hour24 >= 0 && hour24 <= 23 && minutes) {
+          const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
+          const ampm = hour24 >= 12 ? 'PM' : 'AM';
+          eventTime = `${hour12}:${minutes} ${ampm}`;
+        } else {
+          eventTime = timeStr; // Fallback to original
+        }
+      } else {
+        eventTime = timeStr; // Fallback to original
+      }
     } catch (err) {
       console.warn('⚠️ Error formatting time:', event.EventTime, err.message);
       eventTime = event.EventTime.toString();
@@ -1334,42 +1356,123 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
   const orderNumber = generateOrderNumber();
   const amount = stateData.selectedTicketPrice;
 
-  const razorpayOrder = await razorpay.orders.create({
-    amount: Math.round(amount * 100),
-    currency: 'INR',
-    receipt: orderNumber,
-  });
+  // Get user details for payment link
+  const userDetails = await pool
+    .request()
+    .input('userId', sql.Int, userId)
+    .query('SELECT FullName, PhoneNumber FROM Users WHERE UserID = @userId;');
+  
+  const userName = userDetails.recordset[0]?.FullName || 'Customer';
+  const userPhone = userDetails.recordset[0]?.PhoneNumber || phoneForDB;
 
+  // Create Razorpay Payment Link using Payment Links API
+  let paymentLink;
+  let razorpayPaymentLinkId = null;
+  
+  try {
+    // Calculate expiry time (24 hours from now)
+    const expireBy = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours in seconds
+    
+    // Create payment link using Razorpay Payment Links API directly
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    
+    const paymentLinkPayload = {
+      amount: Math.round(amount * 100), // Amount in paise
+      currency: 'INR',
+      accept_partial: false,
+      expire_by: expireBy,
+      reference_id: orderNumber,
+      description: `Event Ticket Purchase - Order ${orderNumber}`,
+      customer: {
+        name: userName,
+        email: email,
+        contact: userPhone.startsWith('+') ? userPhone : `+${userPhone}`,
+      },
+      notify: {
+        sms: true,
+        email: true,
+      },
+      reminder_enable: true,
+      notes: {
+        order_number: orderNumber,
+        user_id: userId.toString(),
+        event_id: stateData.selectedEventId?.toString() || '',
+        ticket_type_id: stateData.selectedTicketId?.toString() || '',
+      },
+      callback_url: process.env.PAYMENT_CALLBACK_URL || `${process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app'}/payment/callback`,
+      callback_method: 'get',
+    };
+
+    // Call Razorpay Payment Links API using axios
+    const paymentLinkResponse = await axios.post(
+      'https://api.razorpay.com/v1/payment_links',
+      paymentLinkPayload,
+      {
+        auth: {
+          username: keyId,
+          password: keySecret,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    paymentLink = paymentLinkResponse.data.short_url || paymentLinkResponse.data.url;
+    razorpayPaymentLinkId = paymentLinkResponse.data.id;
+    
+    console.log('✅ Razorpay Payment Link created:', paymentLink);
+    console.log('📋 Payment Link ID:', razorpayPaymentLinkId);
+  } catch (razorpayError) {
+    console.error('❌ Razorpay Payment Link creation failed:', razorpayError.response?.data || razorpayError.message);
+    // Fallback: Create order and use frontend payment page
+    const razorpayOrder = await razorpay.orders.create({
+      amount: Math.round(amount * 100),
+      currency: 'INR',
+      receipt: orderNumber,
+    });
+    
+    const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+    paymentLink = `${frontendUrl}/payment?orderId=${razorpayOrder.id}&amount=${Math.round(amount * 100)}&key=${process.env.RAZORPAY_KEY_ID}&email=${encodeURIComponent(email)}`;
+    
+    await pool
+      .request()
+      .input('orderNumber', sql.NVarChar, orderNumber)
+      .input('userId', sql.Int, userId)
+      .input('eventId', sql.Int, stateData.selectedEventId)
+      .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
+      .input('razorpayOrderId', sql.NVarChar, razorpayOrder.id)
+      .input('amount', sql.Decimal(10, 2), amount)
+      .input('email', sql.NVarChar, email)
+      .query(`
+        INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status)
+        VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending');
+      `);
+  }
+
+  // Store order in database
+  // Use payment link ID if available, otherwise use order ID
+  const razorpayReferenceId = razorpayPaymentLinkId || `payment_link_${orderNumber}`;
+  
   await pool
     .request()
     .input('orderNumber', sql.NVarChar, orderNumber)
     .input('userId', sql.Int, userId)
     .input('eventId', sql.Int, stateData.selectedEventId)
     .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
-    .input('razorpayOrderId', sql.NVarChar, razorpayOrder.id)
+    .input('razorpayOrderId', sql.NVarChar, razorpayReferenceId)
     .input('amount', sql.Decimal(10, 2), amount)
     .input('email', sql.NVarChar, email)
     .query(`
       INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status)
       VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending');
     `);
-
-  // Create Razorpay payment link
-  // Use frontend payment page or Razorpay checkout URL
-  const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
-  // Payment URL that opens Razorpay checkout
-  const paymentUrl = `${frontendUrl}/payment?orderId=${razorpayOrder.id}&amount=${Math.round(amount * 100)}&key=${process.env.RAZORPAY_KEY_ID}&email=${encodeURIComponent(email)}`;
   
-  // Send payment button with URL (WhatsApp URL buttons open external links)
-  await sendButtonMessage(
+  // Send WhatsApp message with valid Razorpay payment link
+  await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\nClick the button below to complete your payment securely:`,
-    [
-      {
-        url: paymentUrl,
-        title: '💳 Pay Now',
-      },
-    ],
+    `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\n💳 *Pay Now:*\n${paymentLink}\n\nClick the link above to complete your payment securely via Razorpay.`,
   );
 
   await updateConversationState(phoneNumber, 'main_menu', {});
