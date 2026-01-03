@@ -661,7 +661,7 @@ async function handleWelcomeStep(phoneNumber) {
   // Send welcome message
   await sendWhatsAppMessage(
     phoneNumber,
-    '👋 Hello! Welcome to Ultraa Events 🎉\n\nWe\'re excited to have you here! Let me show you our upcoming events.',
+    '👋 Hello! Welcome to Ultraa Events 🎉\n\nWe\'re excited to have you here! Let me show you our upcoming events.\n\n💡 Tip: Type "START" anytime to restart the conversation.',
   );
 
   // Fetch and send event catalog immediately
@@ -1126,11 +1126,17 @@ async function handleEventDetails(phoneNumber, messageText, stateData) {
       }
     }
     
+    // Add "Back to Menu" option after all ticket buttons
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await sendButtonMessage(phoneNumber, '💡 Or go back to the main menu:', [
+      { id: 'back_to_menu', title: '🏠 Back to Menu' },
+    ]);
+    
     await updateConversationState(phoneNumber, 'selecting_ticket', stateData);
     return;
   }
 
-  if (lower === 'back' || lower === 'view_other_events') {
+  if (lower === 'back' || lower === 'view_other_events' || messageText === 'back_to_menu') {
     await handleMainMenu(phoneNumber, 'view_events', stateData);
     return;
   }
@@ -1138,10 +1144,17 @@ async function handleEventDetails(phoneNumber, messageText, stateData) {
   await sendButtonMessage(phoneNumber, "Would you like to purchase a ticket?", [
     { id: 'yes_buy_ticket', title: '✅ Yes, Buy Ticket' },
     { id: 'view_other_events', title: '📅 View Other Events' },
+    { id: 'back_to_menu', title: '🏠 Back to Menu' },
   ]);
 }
 
 async function handleTicketSelection(phoneNumber, messageText, stateData) {
+  // Handle "Back to Menu" button
+  if (messageText === 'back_to_menu' || messageText.toLowerCase() === 'back to menu') {
+    await handleMainMenu(phoneNumber, 'view_events', stateData);
+    return;
+  }
+  
   // Handle button reply (ticket_123) from button message
   let ticketId = null;
   
@@ -1206,7 +1219,10 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
           title: buttonText,
         };
       });
-      await sendButtonMessage(phoneNumber, i === 0 ? '🎫 Please select your ticket type:' : 'More options:', buttons);
+      const bodyText = i === 0 
+        ? '🎫 Please select your ticket type:\n\n💡 Tip: Type "START" anytime to restart'
+        : 'More ticket options:';
+      await sendButtonMessage(phoneNumber, bodyText, buttons);
       if (i + maxButtonsPerMessage < tickets.length) {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
@@ -1218,15 +1234,21 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
 
   await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\nPlease provide your email address where we can send your ticket:`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\nPlease provide your email address where we can send your ticket:\n\n💡 Or type "START" to go back to the main menu.`,
   );
   await updateConversationState(phoneNumber, 'awaiting_email', stateData);
 }
 
 async function handleEmailStep(phoneNumber, messageText, stateData) {
+  // Handle "Back to Menu" button
+  if (messageText === 'back_to_menu' || messageText.toLowerCase() === 'back to menu' || messageText.toLowerCase() === 'start') {
+    await handleMainMenu(phoneNumber, 'view_events', stateData);
+    return;
+  }
+  
   const email = messageText.trim();
   if (!email.includes('@')) {
-    await sendWhatsAppMessage(phoneNumber, 'Please provide a valid email address.');
+    await sendWhatsAppMessage(phoneNumber, 'Please provide a valid email address.\n\n💡 Or type "START" to go back to the main menu.');
     return;
   }
 
@@ -1295,6 +1317,27 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
     if (messageObj?.type === 'interactive') {
       if (messageObj.interactive?.button_reply) messageText = messageObj.interactive.button_reply.id;
       if (messageObj.interactive?.list_reply) messageText = messageObj.interactive.list_reply.id;
+    }
+
+    // Check for restart commands (START, MENU, RESTART) - works from ANY state
+    const restartCommands = ['start', 'menu', 'restart', 'begin', 'home', 'back to menu', 'back to start'];
+    const messageLower = messageText.toLowerCase().trim();
+    if (restartCommands.includes(messageLower) || messageLower === 'back_to_menu' || messageLower === 'back_to_start') {
+      console.log(`🔄 Restart command detected: "${messageText}" - Resetting conversation`);
+      const phoneForDB = phoneNumber.replace(/^\+/, '');
+      try {
+        // Clear conversation state
+        await pool
+          .request()
+          .input('phone', sql.NVarChar, phoneForDB)
+          .query('DELETE FROM ConversationState WHERE PhoneNumber = @phone;');
+        console.log('✅ Conversation state cleared');
+      } catch (err) {
+        console.error('⚠️ Error clearing state:', err.message);
+      }
+      // Start fresh
+      await handleWelcomeStep(phoneNumber);
+      return;
     }
 
     // Ensure database connection is active
