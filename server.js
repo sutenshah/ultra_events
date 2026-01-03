@@ -195,35 +195,111 @@ if (process.env.SQL_CONNECTION_STRING) {
   };
 } else {
   // Option 2: Use individual parameters (recommended)
+  const serverAddress = process.env.SQL_SERVER || process.env.SQL_DATA_SOURCE;
+  
+  // Handle server with instance name (e.g., sql.bsite.net\MSSQL2016)
+  // mssql package handles instance names automatically if included in server field
   sqlConfig = {
-    server: process.env.SQL_SERVER || process.env.SQL_DATA_SOURCE,
+    server: serverAddress, // Can include instance: server\instance
     database: process.env.SQL_DATABASE || process.env.SQL_INITIAL_CATALOG,
     user: process.env.SQL_USER || process.env.SQL_USER_ID,
     password: process.env.SQL_PASSWORD,
     port: parseInt(process.env.SQL_PORT || '1433', 10),
+    connectionTimeout: parseInt(process.env.SQL_CONNECTION_TIMEOUT || '30000', 10), // 30 seconds default
+    requestTimeout: parseInt(process.env.SQL_REQUEST_TIMEOUT || '30000', 10), // 30 seconds default
     options: {
       encrypt: process.env.SQL_ENCRYPT === 'true',
       trustServerCertificate: process.env.SQL_TRUST_SERVER_CERTIFICATE !== 'false',
       enableArithAbort: true,
+      // Additional options for better connectivity
+      connectTimeout: parseInt(process.env.SQL_CONNECT_TIMEOUT || '30000', 10),
     },
     pool: {
       max: 10,
       min: 0,
       idleTimeoutMillis: 30000,
+      acquireTimeoutMillis: 30000, // Time to wait for connection from pool
     },
   };
 }
 
 let pool;
 
-async function connectDB() {
+// Helper function to ensure database connection is active
+async function ensureDBConnection() {
   try {
-    pool = await sql.connect(sqlConfig);
-    console.log('✅ SQL Server connected');
-    await createTables();
+    // Check if pool exists and is connected
+    if (!pool || !pool.connected) {
+      console.log('🔄 Database connection lost, reconnecting...');
+      pool = await sql.connect(sqlConfig);
+      console.log('✅ Database reconnected');
+    }
+    return true;
   } catch (err) {
-    console.error('❌ SQL connection error:', err.message);
-    process.exit(1);
+    console.error('❌ Failed to reconnect to database:', err.message);
+    // Try to reconnect
+    try {
+      pool = await sql.connect(sqlConfig);
+      console.log('✅ Database reconnected on retry');
+      return true;
+    } catch (retryErr) {
+      console.error('❌ Reconnection failed:', retryErr.message);
+      return false;
+    }
+  }
+}
+
+async function connectDB() {
+  const maxRetries = 3;
+  const retryDelay = 5000; // 5 seconds
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Attempting SQL Server connection (${attempt}/${maxRetries})...`);
+      console.log(`   Server: ${sqlConfig.server || 'from connection string'}`);
+      console.log(`   Database: ${sqlConfig.database || 'from connection string'}`);
+      
+      pool = await sql.connect(sqlConfig);
+      console.log('✅ SQL Server connected successfully!');
+      await createTables();
+      
+      // Set up connection error handler
+      pool.on('error', async (err) => {
+        console.error('❌ SQL Pool error:', err.message);
+        console.log('🔄 Attempting to reconnect...');
+        try {
+          pool = await sql.connect(sqlConfig);
+          console.log('✅ Reconnected after pool error');
+        } catch (reconnectErr) {
+          console.error('❌ Reconnection failed:', reconnectErr.message);
+        }
+      });
+      
+      return; // Success, exit function
+    } catch (err) {
+      console.error(`❌ SQL connection attempt ${attempt} failed:`, err.message);
+      
+      if (attempt < maxRetries) {
+        console.log(`⏳ Retrying in ${retryDelay / 1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      } else {
+        console.error('❌ All connection attempts failed.');
+        console.error('📋 Connection details:');
+        console.error(`   Server: ${sqlConfig.server || 'from connection string'}`);
+        console.error(`   Database: ${sqlConfig.database || 'from connection string'}`);
+        console.error(`   User: ${sqlConfig.user || 'from connection string'}`);
+        console.error(`   Port: ${sqlConfig.port || 'default (1433)'}`);
+        console.error(`   Encrypt: ${sqlConfig.options?.encrypt || 'default'}`);
+        console.error('\n💡 Troubleshooting tips:');
+        console.error('   1. Check if SQL Server allows remote connections');
+        console.error('   2. Verify firewall allows Render IP addresses');
+        console.error('   3. Ensure SQL Server Authentication is enabled');
+        console.error('   4. Check if server address includes instance name (e.g., server\\instance)');
+        console.error('   5. Verify credentials are correct in Render environment variables');
+        // Don't exit on startup failure - let server start and retry on first request
+        console.error('⚠️  Server will start but database operations will fail until connection is established');
+      }
+    }
   }
 }
 
@@ -480,24 +556,63 @@ async function updateConversationState(phoneNumber, step, data) {
     return;
   }
   
-  // Format phone number for database (store without + for consistency)
-  const phoneForDB = phoneNumber.replace(/^\+/, ''); // Remove + if present for DB storage
+  // Ensure database connection is active
+  const isConnected = await ensureDBConnection();
+  if (!isConnected) {
+    console.error('❌ Cannot update conversation state - database not connected');
+    return;
+  }
   
-  const request = pool.request();
-  await request
-    .input('phone', sql.NVarChar, phoneForDB)
-    .input('step', sql.NVarChar, step)
-    .input('data', sql.NVarChar, JSON.stringify(data || {}))
-    .query(`
-      MERGE ConversationState AS target
-      USING (SELECT @phone AS PhoneNumber) AS src
-      ON target.PhoneNumber = src.PhoneNumber
-      WHEN MATCHED THEN
-        UPDATE SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
-      WHEN NOT MATCHED THEN
-        INSERT (PhoneNumber, CurrentStep, StateData)
-        VALUES (@phone, @step, @data);
-    `);
+  try {
+    // Format phone number for database (store without + for consistency)
+    const phoneForDB = phoneNumber.replace(/^\+/, ''); // Remove + if present for DB storage
+    
+    const request = pool.request();
+    await request
+      .input('phone', sql.NVarChar, phoneForDB)
+      .input('step', sql.NVarChar, step)
+      .input('data', sql.NVarChar, JSON.stringify(data || {}))
+      .query(`
+        MERGE ConversationState AS target
+        USING (SELECT @phone AS PhoneNumber) AS src
+        ON target.PhoneNumber = src.PhoneNumber
+        WHEN MATCHED THEN
+          UPDATE SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
+        WHEN NOT MATCHED THEN
+          INSERT (PhoneNumber, CurrentStep, StateData)
+          VALUES (@phone, @step, @data);
+      `);
+  } catch (err) {
+    console.error('❌ Error updating conversation state:', err.message);
+    // Try to reconnect and retry once
+    if (err.message.includes('not connected') || err.message.includes('timeout')) {
+      console.log('🔄 Attempting to reconnect and retry...');
+      const reconnected = await ensureDBConnection();
+      if (reconnected) {
+        try {
+          const phoneForDB = phoneNumber.replace(/^\+/, '');
+          const request = pool.request();
+          await request
+            .input('phone', sql.NVarChar, phoneForDB)
+            .input('step', sql.NVarChar, step)
+            .input('data', sql.NVarChar, JSON.stringify(data || {}))
+            .query(`
+              MERGE ConversationState AS target
+              USING (SELECT @phone AS PhoneNumber) AS src
+              ON target.PhoneNumber = src.PhoneNumber
+              WHEN MATCHED THEN
+                UPDATE SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
+              WHEN NOT MATCHED THEN
+                INSERT (PhoneNumber, CurrentStep, StateData)
+                VALUES (@phone, @step, @data);
+            `);
+        } catch (retryErr) {
+          console.error('❌ Retry also failed:', retryErr.message);
+        }
+      }
+    }
+    throw err; // Re-throw to be caught by caller
+  }
 }
 
 async function handleWelcomeStep(phoneNumber) {
@@ -509,13 +624,53 @@ async function handleWelcomeStep(phoneNumber) {
 
   // Fetch and send event catalog immediately
   try {
-    const events = await pool
-      .request()
-      .query(`
-        SELECT TOP 5 * FROM Events 
-        WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
-        ORDER BY EventDate ASC;
-      `);
+    // Ensure database connection
+    const isConnected = await ensureDBConnection();
+    if (!isConnected) {
+      console.error('❌ Cannot fetch events - database not connected');
+      await sendWhatsAppMessage(
+        phoneNumber,
+        'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
+      );
+      await updateConversationState(phoneNumber, 'awaiting_name', {});
+      return;
+    }
+
+    let events;
+    try {
+      events = await pool
+        .request()
+        .query(`
+          SELECT TOP 5 * FROM Events 
+          WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
+          ORDER BY EventDate ASC;
+        `);
+    } catch (dbErr) {
+      console.error('❌ Error fetching events:', dbErr.message);
+      if (dbErr.message.includes('not connected') || dbErr.message.includes('timeout') || dbErr.message.includes('Failed to connect')) {
+        const reconnected = await ensureDBConnection();
+        if (reconnected) {
+          try {
+            events = await pool
+              .request()
+              .query(`
+                SELECT TOP 5 * FROM Events 
+                WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
+                ORDER BY EventDate ASC;
+              `);
+          } catch (retryErr) {
+            console.error('❌ Retry failed:', retryErr.message);
+            // Fall through to fallback message
+            events = { recordset: [] };
+          }
+        } else {
+          // Fall through to fallback message
+          events = { recordset: [] };
+        }
+      } else {
+        throw dbErr;
+      }
+    }
 
     if (events.recordset.length > 0) {
       // Format events for list message
@@ -564,11 +719,11 @@ async function handleWelcomeStep(phoneNumber) {
   } catch (err) {
     console.error('Error fetching events in welcome:', err);
     // Fallback to simple welcome message
-    await sendWhatsAppMessage(
-      phoneNumber,
-      'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
-    );
-    await updateConversationState(phoneNumber, 'awaiting_name', {});
+  await sendWhatsAppMessage(
+    phoneNumber,
+    'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
+  );
+  await updateConversationState(phoneNumber, 'awaiting_name', {});
   }
 }
 
@@ -579,21 +734,56 @@ async function handleNameStep(phoneNumber, messageText, stateData) {
     return;
   }
 
+  // Ensure database connection
+  const isConnected = await ensureDBConnection();
+  if (!isConnected) {
+    await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+    return;
+  }
+
   // Format phone for database (without +)
   const phoneForDB = phoneNumber.replace(/^\+/, '');
   // Format phone for WhatsApp API (with +)
   const formattedPhoneForAPI = formatPhoneNumber(phoneNumber);
   
-  await pool
-    .request()
-    .input('name', sql.NVarChar, name)
-    .input('phone', sql.NVarChar, phoneForDB)
-    .query(`
-      IF NOT EXISTS (SELECT 1 FROM Users WHERE PhoneNumber = @phone)
-        INSERT INTO Users (FullName, PhoneNumber) VALUES (@name, @phone)
-      ELSE
-        UPDATE Users SET FullName = @name WHERE PhoneNumber = @phone;
-    `);
+  try {
+    await pool
+      .request()
+      .input('name', sql.NVarChar, name)
+      .input('phone', sql.NVarChar, phoneForDB)
+      .query(`
+        IF NOT EXISTS (SELECT 1 FROM Users WHERE PhoneNumber = @phone)
+          INSERT INTO Users (FullName, PhoneNumber) VALUES (@name, @phone)
+        ELSE
+          UPDATE Users SET FullName = @name WHERE PhoneNumber = @phone;
+      `);
+  } catch (dbErr) {
+    console.error('❌ Error saving user:', dbErr.message);
+    if (dbErr.message.includes('not connected') || dbErr.message.includes('timeout') || dbErr.message.includes('Failed to connect')) {
+      const reconnected = await ensureDBConnection();
+      if (reconnected) {
+        try {
+          await pool
+            .request()
+            .input('name', sql.NVarChar, name)
+            .input('phone', sql.NVarChar, phoneForDB)
+            .query(`
+              IF NOT EXISTS (SELECT 1 FROM Users WHERE PhoneNumber = @phone)
+                INSERT INTO Users (FullName, PhoneNumber) VALUES (@name, @phone)
+              ELSE
+                UPDATE Users SET FullName = @name WHERE PhoneNumber = @phone;
+            `);
+        } catch (retryErr) {
+          console.error('❌ Retry failed:', retryErr.message);
+          throw retryErr;
+        }
+      } else {
+        throw dbErr;
+      }
+    } else {
+      throw dbErr;
+    }
+  }
 
   stateData.name = name;
   
@@ -609,13 +799,48 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
   const lower = messageText.toLowerCase();
 
   if (lower === 'view_events' || lower.includes('event') || lower === 'view_events') {
-    const events = await pool
-      .request()
-      .query(`
-        SELECT TOP 10 * FROM Events 
-        WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
-        ORDER BY EventDate ASC;
-      `);
+    // Ensure database connection
+    const isConnected = await ensureDBConnection();
+    if (!isConnected) {
+      await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+      return;
+    }
+
+    let events;
+    try {
+      events = await pool
+        .request()
+        .query(`
+          SELECT TOP 10 * FROM Events 
+          WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
+          ORDER BY EventDate ASC;
+        `);
+    } catch (dbErr) {
+      console.error('❌ Error fetching events:', dbErr.message);
+      if (dbErr.message.includes('not connected') || dbErr.message.includes('timeout') || dbErr.message.includes('Failed to connect')) {
+        const reconnected = await ensureDBConnection();
+        if (reconnected) {
+          try {
+            events = await pool
+              .request()
+              .query(`
+                SELECT TOP 10 * FROM Events 
+                WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
+                ORDER BY EventDate ASC;
+              `);
+          } catch (retryErr) {
+            console.error('❌ Retry failed:', retryErr.message);
+            await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+            return;
+          }
+        } else {
+          await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+          return;
+        }
+      } else {
+        throw dbErr;
+      }
+    }
 
     if (events.recordset.length === 0) {
       await sendWhatsAppMessage(phoneNumber, '📭 No upcoming events right now. Check back soon!');
@@ -791,9 +1016,9 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
     // From text reply (number)
     const idx = parseInt(messageText, 10) - 1;
     if (!Number.isNaN(idx) && stateData.tickets?.[idx]) {
-      const ticket = stateData.tickets[idx];
-      stateData.selectedTicketId = ticket.TicketTypeID;
-      stateData.selectedTicketPrice = ticket.Price;
+  const ticket = stateData.tickets[idx];
+  stateData.selectedTicketId = ticket.TicketTypeID;
+  stateData.selectedTicketPrice = ticket.Price;
       ticketId = ticket.TicketTypeID;
     }
   }
@@ -886,13 +1111,48 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       if (messageObj.interactive?.list_reply) messageText = messageObj.interactive.list_reply.id;
     }
 
+    // Ensure database connection is active
+    const isConnected = await ensureDBConnection();
+    if (!isConnected) {
+      console.error('❌ Cannot process message - database not connected');
+      await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+      return;
+    }
+
     // Format phone number for database (store without + for consistency)
     const phoneForDB = phoneNumber.replace(/^\+/, ''); // Remove + if present for DB storage
 
-    const stateResult = await pool
-      .request()
-      .input('phone', sql.NVarChar, phoneForDB)
-      .query('SELECT * FROM ConversationState WHERE PhoneNumber = @phone;');
+    let stateResult;
+    try {
+      stateResult = await pool
+        .request()
+        .input('phone', sql.NVarChar, phoneForDB)
+        .query('SELECT * FROM ConversationState WHERE PhoneNumber = @phone;');
+    } catch (dbErr) {
+      console.error('❌ Database query error:', dbErr.message);
+      // Try to reconnect and retry once
+      if (dbErr.message.includes('not connected') || dbErr.message.includes('timeout') || dbErr.message.includes('Failed to connect')) {
+        console.log('🔄 Attempting to reconnect and retry query...');
+        const reconnected = await ensureDBConnection();
+        if (reconnected) {
+          try {
+            stateResult = await pool
+              .request()
+              .input('phone', sql.NVarChar, phoneForDB)
+              .query('SELECT * FROM ConversationState WHERE PhoneNumber = @phone;');
+          } catch (retryErr) {
+            console.error('❌ Retry query failed:', retryErr.message);
+            await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+            return;
+          }
+        } else {
+          await sendWhatsAppMessage(phoneNumber, '⚠️ Database connection issue. Please try again in a moment.');
+          return;
+        }
+      } else {
+        throw dbErr;
+      }
+    }
 
     let currentStep = 'welcome';
     let stateData = {};
@@ -915,7 +1175,7 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       case 'viewing_events':
         // Handle list reply (event_123) or text reply
         if (messageText.startsWith('event_')) {
-          await handleEventSelection(phoneNumber, messageText, stateData);
+        await handleEventSelection(phoneNumber, messageText, stateData);
         } else {
           // Try to parse as number
           const eventNum = parseInt(messageText, 10);
@@ -1349,7 +1609,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     if (message) {
       // This is an incoming message
       // WhatsApp sends phone numbers with country code (e.g., "919876543210" or "+919876543210")
-      const from = message.from;
+    const from = message.from;
       
       // CRITICAL: Validate that 'from' field exists and is not empty
       if (!from || from === 'undefined' || from.trim() === '') {
@@ -1362,10 +1622,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
       const text = message.text?.body || message.button?.text || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || '';
       
       // Log the raw phone number format from WhatsApp
-      console.log(`📱 Incoming WhatsApp from ${from}: ${text}`);
-      
+    console.log(`📱 Incoming WhatsApp from ${from}: ${text}`);
+
       // Process the message - formatPhoneNumber will handle the conversion
-      await processWhatsAppMessage(from, text, message);
+    await processWhatsAppMessage(from, text, message);
     } else if (value?.statuses?.[0]) {
       // This is a status update (message delivered, read, etc.)
       const status = value.statuses[0];
