@@ -288,18 +288,41 @@ function authenticateToken(req, res, next) {
 // WhatsApp Send Helpers (stubbed to console until creds added)
 // ------------------------------------------------------------
 async function sendWhatsAppMessage(phoneNumber, message) {
-  console.log(`📤 WhatsApp → ${phoneNumber}: ${message}`);
+  // Validate phone number first
+  if (!phoneNumber) {
+    console.error('❌ sendWhatsAppMessage called with no phone number');
+    return;
+  }
 
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
-  if (!phoneId || !token) return; // skip API when creds absent
+  if (!phoneId || !token) {
+    console.log('⚠️ WhatsApp credentials not configured');
+    return; // skip API when creds absent
+  }
+
+  // Format phone number with + prefix (required by WhatsApp API)
+  const formattedPhone = formatPhoneNumber(phoneNumber);
+  if (!formattedPhone) {
+    console.error(`❌ Invalid phone number format: ${phoneNumber}`);
+    console.error(`   Input type: ${typeof phoneNumber}, length: ${phoneNumber?.length}`);
+    return;
+  }
+
+  // Log both original and formatted for debugging
+  if (phoneNumber !== formattedPhone.replace('+', '')) {
+    console.log(`📤 WhatsApp → ${phoneNumber} → ${formattedPhone}: ${message.substring(0, 50)}...`);
+  } else {
+    console.log(`📤 WhatsApp → ${formattedPhone}: ${message.substring(0, 50)}...`);
+  }
 
   try {
-    await axios.post(
+    const response = await axios.post(
       `https://graph.facebook.com/v18.0/${phoneId}/messages`,
       {
         messaging_product: 'whatsapp',
-        to: formatPhoneNumber(phoneNumber),
+        recipient_type: 'individual',
+        to: formattedPhone, // Use formatted number with + prefix
         type: 'text',
         text: { body: message },
       },
@@ -310,8 +333,11 @@ async function sendWhatsAppMessage(phoneNumber, message) {
         },
       },
     );
+    console.log('✅ Message sent successfully');
+    return response.data;
   } catch (err) {
     console.error('WhatsApp send error:', err.response?.data || err.message);
+    // Don't throw, just log the error
   }
 }
 
@@ -584,9 +610,17 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
 
 async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
   try {
-    // Validate phone number
-    if (!phoneNumber) {
-      console.error('❌ processWhatsAppMessage called with no phone number');
+    // Validate phone number - CRITICAL: Must exist and be valid
+    if (!phoneNumber || phoneNumber === 'undefined' || phoneNumber.trim() === '') {
+      console.error('❌ processWhatsAppMessage called with invalid phone number:', phoneNumber);
+      console.error('Message object:', JSON.stringify(messageObj, null, 2));
+      return; // Don't process if phone number is invalid
+    }
+
+    // Additional validation: phone number should be numeric (after removing +)
+    const phoneDigits = phoneNumber.replace(/\D/g, '');
+    if (phoneDigits.length < 10) {
+      console.error('❌ Phone number too short:', phoneNumber);
       return;
     }
 
@@ -1024,12 +1058,22 @@ app.post('/webhook/whatsapp', async (req, res) => {
     
     // Handle different webhook event types
     const entry = body?.entry?.[0];
-    if (!entry) return;
+    if (!entry) {
+      console.log('⚠️ No entry in webhook payload');
+      return;
+    }
 
     const changes = entry.changes?.[0];
-    if (!changes) return;
+    if (!changes) {
+      console.log('⚠️ No changes in webhook entry');
+      return;
+    }
 
     const value = changes.value;
+    if (!value) {
+      console.log('⚠️ No value in webhook changes');
+      return;
+    }
     
     // Check if this is a message (not a status update)
     const message = value?.messages?.[0];
@@ -1038,15 +1082,19 @@ app.post('/webhook/whatsapp', async (req, res) => {
       // This is an incoming message
       // WhatsApp sends phone numbers with country code (e.g., "919876543210" or "+919876543210")
       const from = message.from;
-      const text = message.text?.body || message.button?.text || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || '';
       
-      if (!from) {
-        console.error('❌ No phone number in message:', JSON.stringify(message, null, 2));
-        return;
+      // CRITICAL: Validate that 'from' field exists and is not empty
+      if (!from || from === 'undefined' || from.trim() === '') {
+        console.error('❌ Invalid or missing phone number in message');
+        console.error('Message object:', JSON.stringify(message, null, 2));
+        console.error('Full webhook payload:', JSON.stringify(body, null, 2));
+        return; // Don't process if no valid phone number
       }
       
+      const text = message.text?.body || message.button?.text || message.interactive?.button_reply?.id || message.interactive?.list_reply?.id || '';
+      
       // Log the raw phone number format from WhatsApp
-      console.log(`📱 Incoming WhatsApp from ${from} (raw format): ${text}`);
+      console.log(`📱 Incoming WhatsApp from ${from}: ${text}`);
       
       // Process the message - formatPhoneNumber will handle the conversion
       await processWhatsAppMessage(from, text, message);
@@ -1055,10 +1103,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
       const status = value.statuses[0];
       console.log(`📊 Message status update: ${status.status} for ${status.id}`);
       // Status updates don't need processing, just log them
+      return; // Explicitly return to avoid processing
+    } else {
+      // Unknown webhook event type
+      console.log('⚠️ Unknown webhook event type:', JSON.stringify(value, null, 2));
+      return; // Don't process unknown events
     }
   } catch (err) {
     console.error('Webhook processing error:', err.message);
     console.error('Error stack:', err.stack);
+    console.error('Webhook payload:', JSON.stringify(req.body, null, 2));
   }
 });
 
