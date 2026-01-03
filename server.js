@@ -462,6 +462,84 @@ async function sendWhatsAppMessage(phoneNumber, message) {
   }
 }
 
+async function sendWhatsAppImage(phoneNumber, imageDataUrl, caption) {
+  if (!phoneNumber) {
+    console.error('❌ sendWhatsAppImage called with no phone number');
+    return;
+  }
+
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!phoneId || !token) {
+    console.log('⚠️ WhatsApp credentials not configured');
+    return;
+  }
+
+  const formattedPhone = formatPhoneNumber(phoneNumber);
+  if (!formattedPhone) {
+    console.error(`❌ Invalid phone number format: ${phoneNumber}`);
+    return;
+  }
+
+  try {
+    // Extract base64 data from data URL
+    const base64Data = imageDataUrl.includes(',') ? imageDataUrl.split(',')[1] : imageDataUrl;
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+    
+    // Use FormData for multipart upload (required by WhatsApp Media API)
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', imageBuffer, {
+      filename: 'qrcode.png',
+      contentType: 'image/png',
+    });
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', 'image');
+    
+    // Upload image to WhatsApp Media API
+    const uploadResponse = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/media`,
+      form,
+      {
+        headers: {
+          ...form.getHeaders(),
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    const mediaId = uploadResponse.data.id;
+    console.log('✅ Image uploaded to WhatsApp, media ID:', mediaId);
+    
+    // Send image message using media ID
+    const response = await axios.post(
+      `https://graph.facebook.com/v18.0/${phoneId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: formattedPhone,
+        type: 'image',
+        image: {
+          id: mediaId,
+          caption: caption || 'Your QR Code',
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    
+    console.log('✅ QR code image sent successfully');
+    return response.data;
+  } catch (err) {
+    console.error('❌ WhatsApp image send error:', err.response?.data || err.message);
+    console.error('❌ Error details:', JSON.stringify(err.response?.data, null, 2));
+  }
+}
+
 async function sendButtonMessage(phoneNumber, bodyText, buttons) {
   if (!phoneNumber) {
     console.error('❌ sendButtonMessage called with no phone number');
@@ -2330,15 +2408,28 @@ app.get('/payment/callback', async (req, res) => {
     if (orderResult && orderResult.recordset.length > 0) {
       const order = orderResult.recordset[0];
       
-      // Verify payment status with Razorpay API before processing
+      console.log('✅ Order found! Processing payment IMMEDIATELY:', order.OrderNumber);
+      
+      // Process payment immediately (callback means payment was successful)
+      // Don't wait for verification - process in background and redirect immediately
       if (actualPaymentId) {
+        // Process payment immediately in background (non-blocking)
+        processPaymentSuccess(order.OrderID, actualPaymentId).catch(err => {
+          console.error('❌ Error processing payment:', err.message);
+        });
+        
+        // Redirect immediately (don't wait)
+        const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+        return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
+      } else {
+        // If no payment ID, still try to process (maybe payment link status changed)
+        console.log('⚠️ No payment ID, checking payment link status...');
         try {
           const keyId = process.env.RAZORPAY_KEY_ID;
           const keySecret = process.env.RAZORPAY_KEY_SECRET;
           
-          // Get payment details from Razorpay to verify
-          const paymentResponse = await axios.get(
-            `https://api.razorpay.com/v1/payments/${actualPaymentId}`,
+          const paymentLinkResponse = await axios.get(
+            `https://api.razorpay.com/v1/payment_links/${actualPaymentLinkId}`,
             {
               auth: {
                 username: keyId,
@@ -2347,33 +2438,19 @@ app.get('/payment/callback', async (req, res) => {
             }
           );
           
-          const payment = paymentResponse.data;
-          console.log('📊 Payment status from Razorpay:', payment.status);
-          
-          if (payment.status === 'captured' || payment.status === 'authorized') {
-            console.log('✅ Payment verified! Processing order:', order.OrderNumber);
-            await processPaymentSuccess(order.OrderID, actualPaymentId);
-            
-            // Redirect to success page
-            const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
-            return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
-          } else {
-            console.log('⚠️ Payment not captured yet. Status:', payment.status);
-            const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
-            return res.redirect(`${frontendUrl}/payment/pending?order=${order.OrderNumber}`);
+          const paymentLink = paymentLinkResponse.data;
+          if (paymentLink.status === 'paid' && paymentLink.payments?.length > 0) {
+            const paymentId = paymentLink.payments[0].id;
+            processPaymentSuccess(order.OrderID, paymentId).catch(err => {
+              console.error('❌ Error processing payment:', err.message);
+            });
           }
-        } catch (razorpayErr) {
-          console.error('❌ Error verifying payment with Razorpay:', razorpayErr.response?.data || razorpayErr.message);
-          // Still process if we have payment ID (callback indicates success)
-          if (actualPaymentId && paymentStatus !== 'failed') {
-            console.log('⚠️ Processing payment despite verification error (callback indicates success)');
-            await processPaymentSuccess(order.OrderID, actualPaymentId);
-            const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
-            return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
-          }
+        } catch (err) {
+          console.error('❌ Error checking payment link:', err.message);
         }
-      } else {
-        console.warn('⚠️ No payment ID in callback, but order found');
+        
+        const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+        return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
       }
     } else {
       console.warn('⚠️ Order not found for payment callback');
@@ -2465,7 +2542,7 @@ async function checkPendingPayments() {
   try {
     console.log('🔄 Background check: Checking pending payments (fallback)...');
     
-    // Get all pending orders with payment links (older than 5 minutes to avoid duplicate processing)
+    // Get all pending orders with payment links (older than 1 minute to avoid duplicate processing)
     const pendingOrders = await pool
       .request()
       .query(`
@@ -2474,7 +2551,7 @@ async function checkPendingPayments() {
         WHERE Status = 'pending' 
           AND RazorpayOrderID LIKE 'plink_%'
           AND CreatedAt > DATEADD(hour, -24, GETDATE())
-          AND CreatedAt < DATEADD(minute, -5, GETDATE())
+          AND CreatedAt < DATEADD(minute, -1, GETDATE())
         ORDER BY OrderID DESC;
       `);
     
@@ -2497,12 +2574,12 @@ async function checkPendingPayments() {
   }
 }
 
-// Run payment check every 10 minutes (fallback only)
+// Run payment check every 1 minute (fallback - in case callback doesn't work)
 setInterval(() => {
   checkPendingPayments().catch(err => {
     console.error('❌ Background payment check error:', err.message);
   });
-}, 600000); // 10 minutes - only as fallback
+}, 60000); // 1 minute - fallback check
 
 // Helper function to process successful payment
 async function processPaymentSuccess(orderId, paymentId) {
@@ -2578,16 +2655,30 @@ async function processPaymentSuccess(orderId, paymentId) {
       const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
       let eventTime = '';
       if (orderInfo.EventTime) {
-        const timeStr = orderInfo.EventTime.toString().trim();
-        if (timeStr.includes(':')) {
-          const parts = timeStr.split(':');
-          if (parts.length >= 2) {
-            eventTime = `${parts[0]}:${parts[1]}`;
+        try {
+          let timeStr = String(orderInfo.EventTime).trim();
+          // Handle Date object or date string with 1970
+          if (timeStr.includes('1970') || timeStr.includes('GMT') || timeStr.includes('Jan 01 1970')) {
+            const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})/);
+            if (timeMatch) {
+              const hours = String(parseInt(timeMatch[1], 10)).padStart(2, '0');
+              const minutes = timeMatch[2];
+              eventTime = `${hours}:${minutes}`;
+            }
+          } else if (timeStr.includes(':')) {
+            const parts = timeStr.split(':');
+            if (parts.length >= 2) {
+              const hours = String(parseInt(parts[0], 10)).padStart(2, '0');
+              const minutes = parts[1];
+              eventTime = `${hours}:${minutes}`;
+            }
           }
+        } catch (err) {
+          console.warn('⚠️ Error formatting time in confirmation:', err.message);
         }
       }
       
-      // Send WhatsApp confirmation message
+      // Send WhatsApp confirmation message (text first)
       const confirmationMessage = 
         `🎉 *Payment Successful!*\n\n` +
         `✅ Your ticket has been confirmed!\n\n` +
@@ -2605,6 +2696,12 @@ async function processPaymentSuccess(orderId, paymentId) {
       try {
         await sendWhatsAppMessage(userPhone, confirmationMessage);
         console.log(`✅ Payment confirmation sent to ${userPhone}`);
+        
+        // Send QR code as image
+        if (qrCode) {
+          await sendWhatsAppImage(userPhone, qrCode, 'Your Event Ticket QR Code');
+          console.log(`✅ QR code image sent to ${userPhone}`);
+        }
       } catch (whatsappErr) {
         console.error('⚠️ Failed to send WhatsApp confirmation:', whatsappErr.message);
       }
