@@ -383,6 +383,8 @@ function logStartup(port) {
   console.log(`✅ Orders: POST /api/orders/create`);
   console.log(`✅ Verify: POST /api/orders/verify`);
   console.log(`✅ Scan:   POST /api/scan`);
+  console.log(`✅ Razorpay Webhook: POST /webhook/razorpay`);
+  console.log(`✅ Payment Callback: GET /payment/callback`);
   console.log(`✅ Webhook: GET/POST /webhook/whatsapp`);
   console.log('========================================');
 }
@@ -721,31 +723,21 @@ async function handleWelcomeStep(phoneNumber) {
       const eventRows = events.recordset.map((e, index) => {
         const eventDate = new Date(e.EventDate);
         const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-        // Format time - EventTime is TIME type (HH:MM:SS or HH:MM)
+        // Format time - Use time string directly from database
         let eventTime = '';
         if (e.EventTime) {
-          try {
-            // Handle TIME format (HH:MM:SS or HH:MM)
-            const timeStr = e.EventTime.toString().trim();
+          // Get time as string from database (format: HH:MM:SS or HH:MM)
+          const timeStr = e.EventTime.toString().trim();
+          // Remove seconds if present (HH:MM:SS -> HH:MM)
+          if (timeStr.includes(':')) {
             const parts = timeStr.split(':');
             if (parts.length >= 2) {
-              const hour24 = parseInt(parts[0], 10);
-              const minutes = parts[1];
-              
-              // Validate hour and minutes
-              if (!isNaN(hour24) && hour24 >= 0 && hour24 <= 23 && minutes) {
-                const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-                const ampm = hour24 >= 12 ? 'PM' : 'AM';
-                eventTime = `${hour12}:${minutes} ${ampm}`;
-              } else {
-                eventTime = timeStr; // Fallback to original
-              }
+              eventTime = `${parts[0]}:${parts[1]}`; // Just HH:MM
             } else {
-              eventTime = timeStr; // Fallback to original
+              eventTime = timeStr;
             }
-          } catch (err) {
-            console.warn('⚠️ Error formatting time:', e.EventTime, err.message);
-            eventTime = e.EventTime.toString();
+          } else {
+            eventTime = timeStr;
           }
         }
         
@@ -974,31 +966,21 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
     const eventRows = events.recordset.map((e) => {
       const eventDate = new Date(e.EventDate);
       const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-      // Format time - EventTime is TIME type (HH:MM:SS or HH:MM)
+      // Format time - Use time string directly from database
       let eventTime = '';
       if (e.EventTime) {
-        try {
-          // Handle TIME format (HH:MM:SS or HH:MM)
-          const timeStr = e.EventTime.toString().trim();
+        // Get time as string from database (format: HH:MM:SS or HH:MM)
+        const timeStr = e.EventTime.toString().trim();
+        // Remove seconds if present (HH:MM:SS -> HH:MM)
+        if (timeStr.includes(':')) {
           const parts = timeStr.split(':');
           if (parts.length >= 2) {
-            const hour24 = parseInt(parts[0], 10);
-            const minutes = parts[1];
-            
-            // Validate hour and minutes
-            if (!isNaN(hour24) && hour24 >= 0 && hour24 <= 23 && minutes) {
-              const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-              const ampm = hour24 >= 12 ? 'PM' : 'AM';
-              eventTime = `${hour12}:${minutes} ${ampm}`;
-            } else {
-              eventTime = timeStr; // Fallback to original
-            }
+            eventTime = `${parts[0]}:${parts[1]}`; // Just HH:MM
           } else {
-            eventTime = timeStr; // Fallback to original
+            eventTime = timeStr;
           }
-        } catch (err) {
-          console.warn('⚠️ Error formatting time:', e.EventTime, err.message);
-          eventTime = e.EventTime.toString();
+        } else {
+          eventTime = timeStr;
         }
       }
       
@@ -1123,31 +1105,21 @@ async function handleEventSelection(phoneNumber, messageText, stateData) {
   // Format event details nicely with emojis
   const eventDate = new Date(event.EventDate);
   const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  // Format time - EventTime is TIME type (HH:MM:SS or HH:MM)
+  // Format time - Use time string directly from database
   let eventTime = '';
   if (event.EventTime) {
-    try {
-      // Handle TIME format (HH:MM:SS or HH:MM)
-      const timeStr = event.EventTime.toString().trim();
+    // Get time as string from database (format: HH:MM:SS or HH:MM)
+    const timeStr = event.EventTime.toString().trim();
+    // Remove seconds if present (HH:MM:SS -> HH:MM)
+    if (timeStr.includes(':')) {
       const parts = timeStr.split(':');
       if (parts.length >= 2) {
-        const hour24 = parseInt(parts[0], 10);
-        const minutes = parts[1];
-        
-        // Validate hour and minutes
-        if (!isNaN(hour24) && hour24 >= 0 && hour24 <= 23 && minutes) {
-          const hour12 = hour24 > 12 ? hour24 - 12 : (hour24 === 0 ? 12 : hour24);
-          const ampm = hour24 >= 12 ? 'PM' : 'AM';
-          eventTime = `${hour12}:${minutes} ${ampm}`;
-        } else {
-          eventTime = timeStr; // Fallback to original
-        }
+        eventTime = `${parts[0]}:${parts[1]}`; // Just HH:MM
       } else {
-        eventTime = timeStr; // Fallback to original
+        eventTime = timeStr;
       }
-    } catch (err) {
-      console.warn('⚠️ Error formatting time:', event.EventTime, err.message);
-      eventTime = event.EventTime.toString();
+    } else {
+      eventTime = timeStr;
     }
   }
   
@@ -1437,7 +1409,7 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
         event_id: stateData.selectedEventId?.toString() || '',
         ticket_type_id: stateData.selectedTicketId?.toString() || '',
       },
-      callback_url: process.env.PAYMENT_CALLBACK_URL || `${process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app'}/payment/callback`,
+      callback_url: process.env.PAYMENT_CALLBACK_URL || `${process.env.BACKEND_URL || process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app'}/payment/callback`,
       callback_method: 'get',
     };
 
@@ -1856,6 +1828,12 @@ app.post('/api/orders/verify', async (req, res, next) => {
     }
 
     const order = orderResult.recordset[0];
+    
+    // Check if already completed
+    if (order.Status === 'completed') {
+      return res.json({ success: true, message: 'Payment already verified', order });
+    }
+    
     const qrData = JSON.stringify({
       orderNumber: order.OrderNumber,
       orderId: order.OrderID,
@@ -1882,6 +1860,61 @@ app.post('/api/orders/verify', async (req, res, next) => {
       .request()
       .input('ticketTypeId', sql.Int, order.TicketTypeID)
       .query('UPDATE TicketTypes SET AvailableQuantity = AvailableQuantity - 1 WHERE TicketTypeID = @ticketTypeId;');
+
+    // Get user and event details for WhatsApp confirmation
+    const orderDetails = await pool
+      .request()
+      .input('orderId', sql.Int, order.OrderID)
+      .query(`
+        SELECT o.*, u.FullName, u.PhoneNumber, u.Email, e.EventName, e.EventDate, e.EventTime, e.Venue, tt.TicketName
+        FROM Orders o
+        JOIN Users u ON o.UserID = u.UserID
+        JOIN Events e ON o.EventID = e.EventID
+        JOIN TicketTypes tt ON o.TicketTypeID = tt.TicketTypeID
+        WHERE o.OrderID = @orderId;
+      `);
+
+    if (orderDetails.recordset.length > 0) {
+      const orderInfo = orderDetails.recordset[0];
+      const userPhone = orderInfo.PhoneNumber;
+      
+      // Format event date and time
+      const eventDate = new Date(orderInfo.EventDate);
+      const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      let eventTime = '';
+      if (orderInfo.EventTime) {
+        const timeStr = orderInfo.EventTime.toString().trim();
+        if (timeStr.includes(':')) {
+          const parts = timeStr.split(':');
+          if (parts.length >= 2) {
+            eventTime = `${parts[0]}:${parts[1]}`;
+          }
+        }
+      }
+      
+      // Send WhatsApp confirmation message
+      const confirmationMessage = 
+        `🎉 *Payment Successful!*\n\n` +
+        `✅ Your ticket has been confirmed!\n\n` +
+        `📦 *Order Details:*\n` +
+        `Order Number: ${orderInfo.OrderNumber}\n` +
+        `Event: ${orderInfo.EventName}\n` +
+        `Ticket: ${orderInfo.TicketName}\n` +
+        `Date: ${formattedDate}\n` +
+        `${eventTime ? `Time: ${eventTime}\n` : ''}` +
+        `Venue: ${orderInfo.Venue}\n\n` +
+        `🎫 *Your QR Code:*\n` +
+        `Show this QR code at the venue for entry.\n\n` +
+        `Thank you for choosing Ultraa Events! 🎊`;
+      
+      try {
+        await sendWhatsAppMessage(userPhone, confirmationMessage);
+        console.log(`✅ Payment confirmation sent to ${userPhone}`);
+      } catch (whatsappErr) {
+        console.error('⚠️ Failed to send WhatsApp confirmation:', whatsappErr.message);
+        // Don't fail the verification if WhatsApp fails
+      }
+    }
 
     res.json({ success: true, message: 'Payment verified', qrCode });
   } catch (err) {
@@ -2007,6 +2040,225 @@ app.post('/api/admin/login', async (req, res, next) => {
     next(err);
   }
 });
+
+// ------------------------------------------------------------
+// Razorpay Webhook & Payment Callback
+// ------------------------------------------------------------
+app.post('/webhook/razorpay', async (req, res) => {
+  res.sendStatus(200); // Immediately acknowledge
+  
+  try {
+    const body = req.body;
+    const event = body.event;
+    const payload = body.payload;
+    
+    console.log('📥 Razorpay webhook received:', event);
+    
+    // Handle payment.paid event (payment successful)
+    if (event === 'payment_link.paid' || event === 'payment.captured') {
+      let paymentLinkId = null;
+      let paymentId = null;
+      let orderId = null;
+      
+      if (event === 'payment_link.paid') {
+        // Payment Link webhook
+        paymentLinkId = payload.payment_link?.entity?.id;
+        paymentId = payload.payment?.entity?.id;
+        orderId = payload.payment?.entity?.order_id;
+      } else if (event === 'payment.captured') {
+        // Regular payment webhook
+        paymentId = payload.payment?.entity?.id;
+        orderId = payload.payment?.entity?.order_id;
+      }
+      
+      if (!paymentId) {
+        console.error('❌ No payment ID in webhook');
+        return;
+      }
+      
+      // Find order by RazorpayOrderID (could be payment link ID or order ID)
+      let orderResult;
+      if (paymentLinkId) {
+        // Try to find by payment link ID first
+        orderResult = await pool
+          .request()
+          .input('razorpayOrderId', sql.NVarChar, paymentLinkId)
+          .query('SELECT * FROM Orders WHERE RazorpayOrderID = @razorpayOrderId AND Status = \'pending\';');
+      }
+      
+      if (!orderResult || !orderResult.recordset.length) {
+        // Try by order ID
+        orderResult = await pool
+          .request()
+          .input('razorpayOrderId', sql.NVarChar, orderId || paymentLinkId)
+          .query('SELECT * FROM Orders WHERE RazorpayOrderID = @razorpayOrderId AND Status = \'pending\';');
+      }
+      
+      if (orderResult && orderResult.recordset.length > 0) {
+        const order = orderResult.recordset[0];
+        await processPaymentSuccess(order.OrderID, paymentId);
+        console.log('✅ Payment processed via webhook');
+      } else {
+        console.warn('⚠️ Order not found for payment:', paymentId);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Razorpay webhook error:', err.message);
+    console.error('Webhook payload:', JSON.stringify(req.body, null, 2));
+  }
+});
+
+// Payment callback handler (for payment links)
+app.get('/payment/callback', async (req, res) => {
+  try {
+    const { payment_id, payment_link_id, order_id } = req.query;
+    
+    if (!payment_id) {
+      return res.status(400).send('Payment ID missing');
+    }
+    
+    // Find order
+    let orderResult = await pool
+      .request()
+      .input('razorpayOrderId', sql.NVarChar, payment_link_id || order_id)
+      .query('SELECT * FROM Orders WHERE (RazorpayOrderID = @razorpayOrderId OR RazorpayOrderID LIKE @razorpayOrderId) AND Status = \'pending\';');
+    
+    if (!orderResult.recordset.length && order_id) {
+      orderResult = await pool
+        .request()
+        .input('razorpayOrderId', sql.NVarChar, order_id)
+        .query('SELECT * FROM Orders WHERE RazorpayOrderID = @razorpayOrderId AND Status = \'pending\';');
+    }
+    
+    if (orderResult.recordset.length > 0) {
+      const order = orderResult.recordset[0];
+      await processPaymentSuccess(order.OrderID, payment_id);
+      
+      // Redirect to success page
+      const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+      return res.redirect(`${frontendUrl}/payment/success?order=${order.OrderNumber}`);
+    }
+    
+    // If order not found, show error
+    const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+    return res.redirect(`${frontendUrl}/payment/error`);
+  } catch (err) {
+    console.error('❌ Payment callback error:', err.message);
+    const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+    return res.redirect(`${frontendUrl}/payment/error`);
+  }
+});
+
+// Helper function to process successful payment
+async function processPaymentSuccess(orderId, paymentId) {
+  try {
+    // Get order details
+    const orderResult = await pool
+      .request()
+      .input('orderId', sql.Int, orderId)
+      .query('SELECT * FROM Orders WHERE OrderID = @orderId;');
+    
+    if (!orderResult.recordset.length) {
+      console.error('❌ Order not found:', orderId);
+      return;
+    }
+    
+    const order = orderResult.recordset[0];
+    
+    // Check if already processed
+    if (order.Status === 'completed') {
+      console.log('✅ Payment already processed for order:', order.OrderNumber);
+      return;
+    }
+    
+    // Generate QR code
+    const qrData = JSON.stringify({
+      orderNumber: order.OrderNumber,
+      orderId: order.OrderID,
+      eventId: order.EventID,
+      timestamp: new Date().toISOString(),
+    });
+    const qrCode = await generateQRCode(qrData);
+    
+    // Update order
+    await pool
+      .request()
+      .input('orderId', sql.Int, orderId)
+      .input('paymentId', sql.NVarChar, paymentId)
+      .input('qrCode', sql.NVarChar, qrCode)
+      .query(`
+        UPDATE Orders
+        SET Status = 'completed',
+            RazorpayPaymentID = @paymentId,
+            QRCode = @qrCode,
+            UpdatedAt = GETDATE()
+        WHERE OrderID = @orderId;
+      `);
+    
+    // Decrease ticket quantity
+    await pool
+      .request()
+      .input('ticketTypeId', sql.Int, order.TicketTypeID)
+      .query('UPDATE TicketTypes SET AvailableQuantity = AvailableQuantity - 1 WHERE TicketTypeID = @ticketTypeId;');
+    
+    // Get user and event details for WhatsApp confirmation
+    const orderDetails = await pool
+      .request()
+      .input('orderId', sql.Int, orderId)
+      .query(`
+        SELECT o.*, u.FullName, u.PhoneNumber, u.Email, e.EventName, e.EventDate, e.EventTime, e.Venue, tt.TicketName
+        FROM Orders o
+        JOIN Users u ON o.UserID = u.UserID
+        JOIN Events e ON o.EventID = e.EventID
+        JOIN TicketTypes tt ON o.TicketTypeID = tt.TicketTypeID
+        WHERE o.OrderID = @orderId;
+      `);
+    
+    if (orderDetails.recordset.length > 0) {
+      const orderInfo = orderDetails.recordset[0];
+      const userPhone = orderInfo.PhoneNumber;
+      
+      // Format event date and time
+      const eventDate = new Date(orderInfo.EventDate);
+      const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      let eventTime = '';
+      if (orderInfo.EventTime) {
+        const timeStr = orderInfo.EventTime.toString().trim();
+        if (timeStr.includes(':')) {
+          const parts = timeStr.split(':');
+          if (parts.length >= 2) {
+            eventTime = `${parts[0]}:${parts[1]}`;
+          }
+        }
+      }
+      
+      // Send WhatsApp confirmation message
+      const confirmationMessage = 
+        `🎉 *Payment Successful!*\n\n` +
+        `✅ Your ticket has been confirmed!\n\n` +
+        `📦 *Order Details:*\n` +
+        `Order Number: ${orderInfo.OrderNumber}\n` +
+        `Event: ${orderInfo.EventName}\n` +
+        `Ticket: ${orderInfo.TicketName}\n` +
+        `Date: ${formattedDate}\n` +
+        `${eventTime ? `Time: ${eventTime}\n` : ''}` +
+        `Venue: ${orderInfo.Venue}\n\n` +
+        `🎫 *Your QR Code:*\n` +
+        `Show this QR code at the venue for entry.\n\n` +
+        `Thank you for choosing Ultraa Events! 🎊`;
+      
+      try {
+        await sendWhatsAppMessage(userPhone, confirmationMessage);
+        console.log(`✅ Payment confirmation sent to ${userPhone}`);
+      } catch (whatsappErr) {
+        console.error('⚠️ Failed to send WhatsApp confirmation:', whatsappErr.message);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error processing payment success:', err.message);
+    throw err;
+  }
+}
 
 // ------------------------------------------------------------
 // WhatsApp Webhook
