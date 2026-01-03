@@ -728,10 +728,29 @@ async function handleWelcomeStep(phoneNumber) {
         else if (e.EventName.toLowerCase().includes('new year') || e.EventName.toLowerCase().includes('bash')) emoji = '🎆';
         else if (e.EventName.toLowerCase().includes('electronic')) emoji = '🎵';
         
+        // WhatsApp limits: title max 24 chars, description max 72 chars
+        let eventTitle = `${emoji} ${e.EventName}`;
+        // Truncate title if too long (max 24 chars)
+        if (eventTitle.length > 24) {
+          eventTitle = eventTitle.substring(0, 21) + '...';
+        }
+        
+        // Description: date, time, venue (max 72 chars)
+        let eventDesc = `📅 ${formattedDate} • ⏰ ${eventTime}`;
+        const venuePart = `📍 ${e.Venue.substring(0, 30)}`;
+        // Combine description parts, ensure total <= 72 chars
+        if ((eventDesc + ' • ' + venuePart).length <= 72) {
+          eventDesc = eventDesc + ' • ' + venuePart;
+        } else {
+          // Truncate venue if needed
+          const maxVenueLength = 72 - eventDesc.length - 3; // 3 for ' • '
+          eventDesc = eventDesc + ' • ' + venuePart.substring(0, maxVenueLength);
+        }
+        
         return {
           id: `event_${e.EventID}`,
-          title: `${emoji} ${e.EventName}`,
-          description: `📅 ${formattedDate} • ⏰ ${eventTime} • 📍 ${e.Venue.substring(0, 30)}`,
+          title: eventTitle,
+          description: eventDesc,
         };
       });
 
@@ -892,6 +911,7 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
     stateData.events = events.recordset;
     
     // Format events with emojis and nice descriptions
+    // WhatsApp limits: title max 24 chars, description max 72 chars
     const eventRows = events.recordset.map((e) => {
       const eventDate = new Date(e.EventDate);
       const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -904,10 +924,39 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
       else if (e.EventName.toLowerCase().includes('new year') || e.EventName.toLowerCase().includes('bash')) emoji = '🎆';
       else if (e.EventName.toLowerCase().includes('electronic')) emoji = '🎵';
       
+      // Title: emoji + event name (max 24 chars)
+      let eventTitle = `${emoji} ${e.EventName}`;
+      if (eventTitle.length > 24) {
+        // Remove emoji if name is too long, or truncate
+        const nameOnly = e.EventName.length > 24 ? e.EventName.substring(0, 21) + '...' : e.EventName;
+        eventTitle = nameOnly.length > 24 ? nameOnly.substring(0, 21) + '...' : nameOnly;
+      }
+      
+      // Description: date, time, venue (max 72 chars)
+      let eventDesc = `📅 ${formattedDate} • ⏰ ${eventTime}`;
+      const venuePart = `📍 ${e.Venue}`;
+      // Combine description parts, ensure total <= 72 chars
+      const combined = eventDesc + ' • ' + venuePart;
+      if (combined.length <= 72) {
+        eventDesc = combined;
+      } else {
+        // Truncate venue if needed
+        const maxVenueLength = 72 - eventDesc.length - 3; // 3 for ' • '
+        if (maxVenueLength > 0) {
+          eventDesc = eventDesc + ' • ' + venuePart.substring(0, maxVenueLength);
+        } else {
+          // If description itself is too long, just use date
+          eventDesc = `📅 ${formattedDate} • ⏰ ${eventTime}`;
+          if (eventDesc.length > 72) {
+            eventDesc = eventDesc.substring(0, 69) + '...';
+          }
+        }
+      }
+      
       return {
         id: `event_${e.EventID}`,
-        title: `${emoji} ${e.EventName}`,
-        description: `📅 ${formattedDate} • ⏰ ${eventTime} • 📍 ${e.Venue.substring(0, 30)}`,
+        title: eventTitle,
+        description: eventDesc,
       };
     });
 
@@ -1009,24 +1058,74 @@ async function handleEventDetails(phoneNumber, messageText, stateData) {
       return;
     }
 
-    // Format tickets as list message
-    const ticketRows = stateData.tickets.map((t, i) => ({
-      id: `ticket_${t.TicketTypeID}`,
-      title: `🎫 ${t.TicketName} - ₹${t.Price}`,
-      description: `${t.AvailableQuantity} tickets available`,
-    }));
-
-    await sendListMessage(
-      phoneNumber,
-      '🎫 Great! Please select your ticket type:',
-      'Select Ticket',
-      [
-        {
-          title: 'Ticket Types',
-          rows: ticketRows,
-        },
-      ],
-    );
+    // WhatsApp Button Messages support max 3 buttons per message
+    // Split tickets into groups of 3 and send multiple button messages
+    const tickets = stateData.tickets;
+    const maxButtonsPerMessage = 3;
+    
+    // Send tickets as button messages (like React component)
+    for (let i = 0; i < tickets.length; i += maxButtonsPerMessage) {
+      const ticketGroup = tickets.slice(i, i + maxButtonsPerMessage);
+      
+      // Format buttons (max 20 chars per button title for WhatsApp)
+      // Match React component format: "Ticket Name - ₹Price"
+      const buttons = ticketGroup.map((t) => {
+        // Try to include price in button text
+        const priceStr = `₹${t.Price}`;
+        const nameOnly = t.TicketName;
+        
+        // Calculate space needed: " - " (3 chars) + price
+        const spaceNeeded = 3 + priceStr.length;
+        const maxNameLength = 20 - spaceNeeded;
+        
+        let buttonText;
+        if (nameOnly.length <= maxNameLength) {
+          // Full name + price fits
+          buttonText = `${nameOnly} - ${priceStr}`;
+        } else {
+          // Name too long, try shorter format
+          // Option 1: Abbreviate common words
+          let shortName = nameOnly
+            .replace('Regular - ', 'Reg - ')
+            .replace('VIP - ', 'VIP - ')
+            .replace('Stag Male', 'Stag M')
+            .replace('Stag Female', 'Stag F');
+          
+          if (shortName.length <= maxNameLength) {
+            buttonText = `${shortName} - ${priceStr}`;
+          } else {
+            // Option 2: Just show abbreviated name, price in description
+            if (shortName.length > 20) {
+              shortName = shortName.substring(0, 17) + '...';
+            }
+            buttonText = shortName;
+          }
+        }
+        
+        // Final check: ensure button text is max 20 chars
+        if (buttonText.length > 20) {
+          buttonText = buttonText.substring(0, 17) + '...';
+        }
+        
+        return {
+          id: `ticket_${t.TicketTypeID}`,
+          title: buttonText,
+        };
+      });
+      
+      // First message includes instruction, others are continuation
+      const bodyText = i === 0 
+        ? '🎫 Great! Please select your ticket type:'
+        : 'More ticket options:';
+      
+      await sendButtonMessage(phoneNumber, bodyText, buttons);
+      
+      // Small delay between messages to avoid rate limiting
+      if (i + maxButtonsPerMessage < tickets.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
     await updateConversationState(phoneNumber, 'selecting_ticket', stateData);
     return;
   }
@@ -1043,11 +1142,11 @@ async function handleEventDetails(phoneNumber, messageText, stateData) {
 }
 
 async function handleTicketSelection(phoneNumber, messageText, stateData) {
-  // Handle both list reply (ticket_123) and text reply (1, 2, 3, etc.)
+  // Handle button reply (ticket_123) from button message
   let ticketId = null;
   
   if (messageText.startsWith('ticket_')) {
-    // From list message selection
+    // From button message selection
     ticketId = parseInt(messageText.replace('ticket_', ''), 10);
     const ticket = stateData.tickets?.find(t => t.TicketTypeID === ticketId);
     if (ticket) {
@@ -1055,18 +1154,63 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
       stateData.selectedTicketPrice = ticket.Price;
     }
   } else {
-    // From text reply (number)
+    // Try to parse as number (fallback for text input)
     const idx = parseInt(messageText, 10) - 1;
     if (!Number.isNaN(idx) && stateData.tickets?.[idx]) {
-  const ticket = stateData.tickets[idx];
-  stateData.selectedTicketId = ticket.TicketTypeID;
-  stateData.selectedTicketPrice = ticket.Price;
+      const ticket = stateData.tickets[idx];
+      stateData.selectedTicketId = ticket.TicketTypeID;
+      stateData.selectedTicketPrice = ticket.Price;
       ticketId = ticket.TicketTypeID;
     }
   }
 
   if (!stateData.selectedTicketId || !stateData.selectedTicketPrice) {
     await sendWhatsAppMessage(phoneNumber, '❌ Invalid ticket choice. Please try again.');
+    // Resend ticket options
+    const tickets = stateData.tickets;
+    const maxButtonsPerMessage = 3;
+    
+    for (let i = 0; i < tickets.length; i += maxButtonsPerMessage) {
+      const ticketGroup = tickets.slice(i, i + maxButtonsPerMessage);
+      // Format buttons (max 20 chars per button title for WhatsApp)
+      const buttons = ticketGroup.map((t) => {
+        const priceStr = `₹${t.Price}`;
+        const nameOnly = t.TicketName;
+        const spaceNeeded = 3 + priceStr.length; // " - " + price
+        const maxNameLength = 20 - spaceNeeded;
+        
+        let buttonText;
+        if (nameOnly.length <= maxNameLength) {
+          buttonText = `${nameOnly} - ${priceStr}`;
+        } else {
+          // Abbreviate common words
+          let shortName = nameOnly
+            .replace('Regular - ', 'Reg - ')
+            .replace('Stag Male', 'Stag M')
+            .replace('Stag Female', 'Stag F');
+          
+          if (shortName.length <= maxNameLength) {
+            buttonText = `${shortName} - ${priceStr}`;
+          } else {
+            shortName = shortName.length > 20 ? shortName.substring(0, 17) + '...' : shortName;
+            buttonText = shortName;
+          }
+        }
+        
+        if (buttonText.length > 20) {
+          buttonText = buttonText.substring(0, 17) + '...';
+        }
+        
+        return {
+          id: `ticket_${t.TicketTypeID}`,
+          title: buttonText,
+        };
+      });
+      await sendButtonMessage(phoneNumber, i === 0 ? '🎫 Please select your ticket type:' : 'More options:', buttons);
+      if (i + maxButtonsPerMessage < tickets.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
     return;
   }
 
