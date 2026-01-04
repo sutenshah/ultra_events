@@ -25,6 +25,9 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Serve static files (HTML forms)
+app.use(express.static('public'));
+
 
 //--------------------------------SUTEN TRIAL STARTS HERE--------------------------------
 
@@ -1407,11 +1410,19 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
 
   const selectedTicket = stateData.tickets.find(t => t.TicketTypeID === stateData.selectedTicketId);
 
+  // Generate a unique session ID for this booking
+  const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  stateData.sessionId = sessionId;
+  
+  // Create form URL with ticket details
+  const backendUrl = process.env.BACKEND_URL || process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+  const formUrl = `${backendUrl}/user-form.html?sessionId=${encodeURIComponent(sessionId)}&ticketName=${encodeURIComponent(selectedTicket.TicketName)}&ticketAmount=${encodeURIComponent(selectedTicket.Price)}`;
+  
   await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 To complete your booking, please provide:\n\n1️⃣ *Full Name*\n2️⃣ *Phone Number*\n3️⃣ *Email Address*\n\nPlease start by sending your *Full Name*:\n\n💡 Or type "START" to go back to the main menu.`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nPlease fill in your details using the form below:\n\n🔗 ${formUrl}\n\nClick the link above to open the form, fill in your details, and submit.\n\n💡 Or type "START" to go back to the main menu.`,
   );
-  await updateConversationState(phoneNumber, 'awaiting_full_name', stateData);
+  await updateConversationState(phoneNumber, 'awaiting_form_submit', stateData);
 }
 
 async function handleFullNameStep(phoneNumber, messageText, stateData) {
@@ -1789,6 +1800,18 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       case 'selecting_ticket':
         await handleTicketSelection(phoneNumber, messageText, stateData);
         break;
+      case 'awaiting_form_submit':
+        // User might have submitted form, check if we have the data
+        // If not, remind them to use the form
+        if (messageText.toLowerCase() === 'start' || messageText.toLowerCase() === 'menu') {
+          await handleMainMenu(phoneNumber, 'view_events', stateData);
+        } else {
+          await sendWhatsAppMessage(
+            phoneNumber,
+            '📝 Please use the form link that was sent earlier to complete your booking.\n\nIf you lost the link, type "START" to begin again.'
+          );
+        }
+        break;
       case 'awaiting_full_name':
         await handleFullNameStep(phoneNumber, messageText, stateData);
         break;
@@ -1821,6 +1844,212 @@ app.get('/', (_req, res) => {
     version: '1.0.0',
     timestamp: new Date().toISOString(),
   });
+});
+
+// WhatsApp User Form Submission Handler
+app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
+  try {
+    const { sessionId, fullName, phoneNumber, email } = req.body;
+    
+    if (!sessionId || !fullName || !phoneNumber || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'All fields are required' 
+      });
+    }
+    
+    // Find conversation state by sessionId
+    const stateResult = await pool
+      .request()
+      .input('sessionId', sql.NVarChar, sessionId)
+      .query(`
+        SELECT TOP 1 cs.* 
+        FROM ConversationState cs
+        WHERE cs.StateData LIKE '%' + @sessionId + '%'
+        ORDER BY cs.UpdatedAt DESC;
+      `);
+    
+    if (!stateResult.recordset.length) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Session not found. Please start over.' 
+      });
+    }
+    
+    const stateRecord = stateResult.recordset[0];
+    const stateData = JSON.parse(stateRecord.StateData || '{}');
+    const phoneNumberFromDB = stateRecord.PhoneNumber;
+    
+    // Format phone for database (without +)
+    const phoneForDB = phoneNumber.replace(/^\+/, '').replace(/\D/g, '');
+    const phoneForDBWithCountry = phoneForDB.startsWith('91') ? phoneForDB : `91${phoneForDB}`;
+    
+    // Insert or update user in Users table
+    let userId;
+    const existingUser = await pool
+      .request()
+      .input('phone', sql.NVarChar, phoneForDBWithCountry)
+      .query('SELECT UserID, FullName, Email FROM Users WHERE PhoneNumber = @phone;');
+
+    if (existingUser.recordset.length > 0) {
+      // Update existing user
+      userId = existingUser.recordset[0].UserID;
+      await pool
+        .request()
+        .input('userId', sql.Int, userId)
+        .input('fullName', sql.NVarChar, fullName)
+        .input('email', sql.NVarChar, email)
+        .input('phone', sql.NVarChar, phoneForDBWithCountry)
+        .query(`
+          UPDATE Users 
+          SET FullName = @fullName, 
+              Email = @email,
+              PhoneNumber = @phone,
+              UpdatedAt = GETDATE()
+          WHERE UserID = @userId;
+        `);
+      console.log('✅ User updated via form:', userId);
+    } else {
+      // Create new user
+      const newUser = await pool
+        .request()
+        .input('fullName', sql.NVarChar, fullName)
+        .input('email', sql.NVarChar, email)
+        .input('phone', sql.NVarChar, phoneForDBWithCountry)
+        .query(`
+          INSERT INTO Users (FullName, Email, PhoneNumber, CreatedAt, UpdatedAt)
+          OUTPUT INSERTED.UserID
+          VALUES (@fullName, @email, @phone, GETDATE(), GETDATE());
+        `);
+      userId = newUser.recordset[0].UserID;
+      console.log('✅ New user created via form:', userId);
+    }
+    
+    // Update state data with user info
+    stateData.userFullName = fullName;
+    stateData.userPhone = phoneNumber;
+    stateData.userEmail = email;
+    stateData.formSubmitted = true;
+    
+    // Update conversation state
+    await pool
+      .request()
+      .input('phone', sql.NVarChar, phoneNumberFromDB)
+      .input('stateData', sql.NVarChar, JSON.stringify(stateData))
+      .input('currentStep', sql.NVarChar, 'form_submitted')
+      .query(`
+        UPDATE ConversationState
+        SET StateData = @stateData,
+            CurrentStep = @currentStep,
+            UpdatedAt = GETDATE()
+        WHERE PhoneNumber = @phone;
+      `);
+    
+    // Now create the order and payment link
+    const orderNumber = generateOrderNumber();
+    const amount = stateData.selectedTicketPrice || 0;
+    
+    // Get user details for payment link
+    const userDetails = await pool
+      .request()
+      .input('userId', sql.Int, userId)
+      .query('SELECT FullName, PhoneNumber, Email FROM Users WHERE UserID = @userId;');
+    
+    const userName = userDetails.recordset[0]?.FullName || fullName;
+    const userPhone = userDetails.recordset[0]?.PhoneNumber || phoneForDBWithCountry;
+    const userEmailForPayment = userDetails.recordset[0]?.Email || email;
+    
+    // Create Razorpay Payment Link
+    let paymentLink;
+    let razorpayPaymentLinkId = null;
+    
+    try {
+      const expireBy = Math.floor(Date.now() / 1000) + (24 * 60 * 60);
+      const keyId = process.env.RAZORPAY_KEY_ID;
+      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      
+      const paymentLinkResponse = await axios.post(
+        'https://api.razorpay.com/v1/payment_links',
+        {
+          amount: Math.round(amount * 100),
+          currency: 'INR',
+          accept_partial: false,
+          expire_by: expireBy,
+          reference_id: orderNumber,
+          description: `Event Ticket Purchase - Order ${orderNumber}`,
+          customer: {
+            name: userName,
+            email: userEmailForPayment,
+            contact: userPhone.startsWith('+') ? userPhone : `+${userPhone}`,
+          },
+          notify: {
+            sms: true,
+            email: true,
+          },
+          reminder_enable: true,
+          notes: {
+            order_number: orderNumber,
+            user_id: userId.toString(),
+            event_id: stateData.selectedEventId?.toString() || '',
+            ticket_type_id: stateData.selectedTicketId?.toString() || '',
+          },
+          callback_url: process.env.PAYMENT_CALLBACK_URL || `${process.env.BACKEND_URL || process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app'}/payment/callback`,
+          callback_method: 'get',
+        },
+        {
+          auth: {
+            username: keyId,
+            password: keySecret,
+          },
+        }
+      );
+      
+      paymentLink = paymentLinkResponse.data.short_url || paymentLinkResponse.data.url;
+      razorpayPaymentLinkId = paymentLinkResponse.data.id;
+      
+      console.log('✅ Razorpay Payment Link created via form:', paymentLink);
+    } catch (razorpayError) {
+      console.error('❌ Razorpay Payment Link creation failed:', razorpayError.response?.data || razorpayError.message);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Failed to create payment link. Please try again.' 
+      });
+    }
+    
+    // Store order in database
+    await pool
+      .request()
+      .input('orderNumber', sql.NVarChar, orderNumber)
+      .input('userId', sql.Int, userId)
+      .input('eventId', sql.Int, stateData.selectedEventId)
+      .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
+      .input('razorpayOrderId', sql.NVarChar, razorpayPaymentLinkId)
+      .input('amount', sql.Decimal(10, 2), amount)
+      .input('email', sql.NVarChar, userEmailForPayment)
+      .query(`
+        INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status, Email)
+        VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending', @email);
+      `);
+    
+    console.log('✅ Order created via form:', orderNumber);
+    
+    // Send payment link via WhatsApp
+    const formattedPhone = phoneNumberFromDB.startsWith('+') ? phoneNumberFromDB : `+${phoneNumberFromDB}`;
+    await sendWhatsAppMessage(
+      formattedPhone,
+      `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\n💳 *Pay Now:*\n${paymentLink}\n\nClick the link above to complete your payment securely via Razorpay.\n\n✅ You'll receive confirmation once payment is successful.`,
+    );
+    
+    res.json({ 
+      success: true, 
+      message: 'Information saved successfully! Payment link sent to WhatsApp.',
+      orderNumber: orderNumber
+    });
+    
+  } catch (err) {
+    console.error('❌ Form submission error:', err);
+    next(err);
+  }
 });
 
 // Users
