@@ -299,14 +299,14 @@ async function connectDB() {
   const retryDelay = 5000; // 5 seconds
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
+  try {
       console.log(`🔄 Attempting SQL Server connection (${attempt}/${maxRetries})...`);
       console.log(`   Server: ${sqlConfig.server || 'from connection string'}`);
       console.log(`   Database: ${sqlConfig.database || 'from connection string'}`);
       
-      pool = await sql.connect(sqlConfig);
+    pool = await sql.connect(sqlConfig);
       console.log('✅ SQL Server connected successfully!');
-      await createTables();
+    await createTables();
       
       // Set up connection error handler
       pool.on('error', async (err) => {
@@ -321,7 +321,7 @@ async function connectDB() {
       });
       
       return; // Success, exit function
-    } catch (err) {
+  } catch (err) {
       console.error(`❌ SQL connection attempt ${attempt} failed:`, err.message);
       
       if (attempt < maxRetries) {
@@ -695,21 +695,21 @@ async function updateConversationState(phoneNumber, step, data) {
     // Format phone number for database (store without + for consistency)
     const phoneForDB = phoneNumber.replace(/^\+/, ''); // Remove + if present for DB storage
     
-    const request = pool.request();
-    await request
+  const request = pool.request();
+  await request
       .input('phone', sql.NVarChar, phoneForDB)
-      .input('step', sql.NVarChar, step)
-      .input('data', sql.NVarChar, JSON.stringify(data || {}))
-      .query(`
-        MERGE ConversationState AS target
-        USING (SELECT @phone AS PhoneNumber) AS src
-        ON target.PhoneNumber = src.PhoneNumber
-        WHEN MATCHED THEN
-          UPDATE SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
-        WHEN NOT MATCHED THEN
-          INSERT (PhoneNumber, CurrentStep, StateData)
-          VALUES (@phone, @step, @data);
-      `);
+    .input('step', sql.NVarChar, step)
+    .input('data', sql.NVarChar, JSON.stringify(data || {}))
+    .query(`
+      MERGE ConversationState AS target
+      USING (SELECT @phone AS PhoneNumber) AS src
+      ON target.PhoneNumber = src.PhoneNumber
+      WHEN MATCHED THEN
+        UPDATE SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (PhoneNumber, CurrentStep, StateData)
+        VALUES (@phone, @step, @data);
+    `);
   } catch (err) {
     console.error('❌ Error updating conversation state:', err.message);
     // Try to reconnect and retry once
@@ -756,11 +756,11 @@ async function handleWelcomeStep(phoneNumber) {
     const isConnected = await ensureDBConnection();
     if (!isConnected) {
       console.error('❌ Cannot fetch events - database not connected');
-      await sendWhatsAppMessage(
-        phoneNumber,
-        'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
-      );
-      await updateConversationState(phoneNumber, 'awaiting_name', {});
+  await sendWhatsAppMessage(
+    phoneNumber,
+    'Hello! Welcome to Ultraa Events 🎉\nPlease share your full name to continue.',
+  );
+  await updateConversationState(phoneNumber, 'awaiting_name', {});
       return;
     }
 
@@ -941,16 +941,16 @@ async function handleNameStep(phoneNumber, messageText, stateData) {
   const formattedPhoneForAPI = formatPhoneNumber(phoneNumber);
   
   try {
-    await pool
-      .request()
-      .input('name', sql.NVarChar, name)
+  await pool
+    .request()
+    .input('name', sql.NVarChar, name)
       .input('phone', sql.NVarChar, phoneForDB)
-      .query(`
-        IF NOT EXISTS (SELECT 1 FROM Users WHERE PhoneNumber = @phone)
-          INSERT INTO Users (FullName, PhoneNumber) VALUES (@name, @phone)
-        ELSE
-          UPDATE Users SET FullName = @name WHERE PhoneNumber = @phone;
-      `);
+    .query(`
+      IF NOT EXISTS (SELECT 1 FROM Users WHERE PhoneNumber = @phone)
+        INSERT INTO Users (FullName, PhoneNumber) VALUES (@name, @phone)
+      ELSE
+        UPDATE Users SET FullName = @name WHERE PhoneNumber = @phone;
+    `);
   } catch (dbErr) {
     console.error('❌ Error saving user:', dbErr.message);
     if (dbErr.message.includes('not connected') || dbErr.message.includes('timeout') || dbErr.message.includes('Failed to connect')) {
@@ -1003,12 +1003,12 @@ async function handleMainMenu(phoneNumber, messageText, stateData) {
     let events;
     try {
       events = await pool
-        .request()
-        .query(`
-          SELECT TOP 10 * FROM Events 
-          WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
-          ORDER BY EventDate ASC;
-        `);
+      .request()
+      .query(`
+        SELECT TOP 10 * FROM Events 
+        WHERE IsActive = 1 AND EventDate >= CAST(GETDATE() AS DATE)
+        ORDER BY EventDate ASC;
+      `);
     } catch (dbErr) {
       console.error('❌ Error fetching events:', dbErr.message);
       if (dbErr.message.includes('not connected') || dbErr.message.includes('timeout') || dbErr.message.includes('Failed to connect')) {
@@ -1332,7 +1332,7 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
     await handleMainMenu(phoneNumber, 'view_events', stateData);
     return;
   }
-  
+
   // Handle button reply (ticket_123) from button message
   let ticketId = null;
   
@@ -1348,9 +1348,9 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
     // Try to parse as number (fallback for text input)
     const idx = parseInt(messageText, 10) - 1;
     if (!Number.isNaN(idx) && stateData.tickets?.[idx]) {
-      const ticket = stateData.tickets[idx];
-      stateData.selectedTicketId = ticket.TicketTypeID;
-      stateData.selectedTicketPrice = ticket.Price;
+  const ticket = stateData.tickets[idx];
+  stateData.selectedTicketId = ticket.TicketTypeID;
+  stateData.selectedTicketPrice = ticket.Price;
       ticketId = ticket.TicketTypeID;
     }
   }
@@ -1437,12 +1437,27 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   
   console.log('🔗 Form URL generated:', formUrl);
   
-  // Send a cleaner message - WhatsApp will auto-detect the URL and make it clickable
-  // Format: Clean text with URL on separate line for better visibility
+  // Store form URL in state for button click handler
+  stateData.formUrl = formUrl;
+  
+  // Send button message with "Complete SignUp to Proceed" button
+  // When clicked, we'll send the form link
+  await sendButtonMessage(
+    phoneNumber,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nClick the button below to open the sign-up form:`,
+    [
+      { id: 'open_signup_form', title: '📝 Complete SignUp to Proceed' },
+      { id: 'back_to_menu', title: '🏠 Back to Menu' },
+    ]
+  );
+  
+  // Also send the form URL as a text message (WhatsApp will make it clickable)
+  // This ensures users can still access it even if button doesn't work
   await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nTap the link below to complete your sign-up:\n\n${formUrl}\n\n💡 Or type "START" to go back to the main menu.`,
+    `🔗 Form Link:\n${formUrl}\n\n💡 Or type "START" to go back to the main menu.`,
   );
+  
   await updateConversationState(phoneNumber, 'awaiting_form_submit', stateData);
 }
 
@@ -1516,7 +1531,7 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
     await sendWhatsAppMessage(phoneNumber, 'Please provide a valid email address.\n\n💡 Or type "START" to go back to the main menu.');
     return;
   }
-  
+
   stateData.userEmail = email;
 
   // Format phone for database (without +)
@@ -1640,25 +1655,25 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
   } catch (razorpayError) {
     console.error('❌ Razorpay Payment Link creation failed:', razorpayError.response?.data || razorpayError.message);
     // Fallback: Create order and use frontend payment page
-    const razorpayOrder = await razorpay.orders.create({
-      amount: Math.round(amount * 100),
-      currency: 'INR',
-      receipt: orderNumber,
-    });
+  const razorpayOrder = await razorpay.orders.create({
+    amount: Math.round(amount * 100),
+    currency: 'INR',
+    receipt: orderNumber,
+  });
     
     const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
     paymentLink = `${frontendUrl}/payment?orderId=${razorpayOrder.id}&amount=${Math.round(amount * 100)}&key=${process.env.RAZORPAY_KEY_ID}&email=${encodeURIComponent(userEmailForPayment)}`;
-    
-    await pool
-      .request()
-      .input('orderNumber', sql.NVarChar, orderNumber)
-      .input('userId', sql.Int, userId)
-      .input('eventId', sql.Int, stateData.selectedEventId)
-      .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
-      .input('razorpayOrderId', sql.NVarChar, razorpayOrder.id)
-      .input('amount', sql.Decimal(10, 2), amount)
+
+  await pool
+    .request()
+    .input('orderNumber', sql.NVarChar, orderNumber)
+    .input('userId', sql.Int, userId)
+    .input('eventId', sql.Int, stateData.selectedEventId)
+    .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
+    .input('razorpayOrderId', sql.NVarChar, razorpayOrder.id)
+    .input('amount', sql.Decimal(10, 2), amount)
       .input('email', sql.NVarChar, userEmailForPayment)
-      .query(`
+    .query(`
         INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status, Email)
         VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending', @email);
       `);
@@ -1726,7 +1741,7 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       try {
         // Clear conversation state
         await pool
-          .request()
+      .request()
           .input('phone', sql.NVarChar, phoneForDB)
           .query('DELETE FROM ConversationState WHERE PhoneNumber = @phone;');
         console.log('✅ Conversation state cleared');
@@ -1754,7 +1769,7 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       stateResult = await pool
         .request()
         .input('phone', sql.NVarChar, phoneForDB)
-        .query('SELECT * FROM ConversationState WHERE PhoneNumber = @phone;');
+      .query('SELECT * FROM ConversationState WHERE PhoneNumber = @phone;');
     } catch (dbErr) {
       console.error('❌ Database query error:', dbErr.message);
       // Try to reconnect and retry once
@@ -1821,15 +1836,43 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
         await handleTicketSelection(phoneNumber, messageText, stateData);
         break;
       case 'awaiting_form_submit':
-        // User might have submitted form, check if we have the data
-        // If not, remind them to use the form
-        if (messageText.toLowerCase() === 'start' || messageText.toLowerCase() === 'menu') {
+        // Handle button click or text commands
+        if (messageText === 'open_signup_form' || messageText.toLowerCase() === 'complete signup' || messageText.toLowerCase() === 'signup') {
+          // Send the form URL
+          if (stateData.formUrl) {
+            await sendWhatsAppMessage(
+              phoneNumber,
+              `📝 *Complete Your Sign-Up*\n\nTap the link below to open the form:\n\n${stateData.formUrl}\n\nFill in your details and submit to proceed with payment.`
+            );
+          } else {
+            await sendWhatsAppMessage(
+              phoneNumber,
+              '⚠️ Form link not found. Please type "START" to begin again.'
+            );
+          }
+        } else if (messageText.toLowerCase() === 'start' || messageText.toLowerCase() === 'menu' || messageText === 'back_to_menu') {
           await handleMainMenu(phoneNumber, 'view_events', stateData);
         } else {
-          await sendWhatsAppMessage(
-            phoneNumber,
-            '📝 Please use the form link that was sent earlier to complete your booking.\n\nIf you lost the link, type "START" to begin again.'
-          );
+          // If user sends any other message, remind them about the form
+          if (stateData.formUrl) {
+            await sendButtonMessage(
+              phoneNumber,
+              '📝 To complete your booking, click the button below to open the sign-up form:',
+              [
+                { id: 'open_signup_form', title: '📝 Complete SignUp to Proceed' },
+                { id: 'back_to_menu', title: '🏠 Back to Menu' },
+              ]
+            );
+            await sendWhatsAppMessage(
+              phoneNumber,
+              `🔗 Or use this link:\n${stateData.formUrl}`
+            );
+          } else {
+            await sendWhatsAppMessage(
+              phoneNumber,
+              '📝 Please use the form link that was sent earlier to complete your booking.\n\nIf you lost the link, type "START" to begin again.'
+            );
+          }
         }
         break;
       case 'awaiting_full_name':
