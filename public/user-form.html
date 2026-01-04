@@ -293,10 +293,13 @@
         // Form submission
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
+            console.log('📝 Form submit event triggered');
             
             const fullName = document.getElementById('fullName').value.trim();
             const phoneNumber = document.getElementById('phoneNumber').value.trim();
             const email = document.getElementById('email').value.trim();
+            
+            console.log('📋 Form data:', { fullName, phoneNumber, email, sessionId });
             
             // Validate all fields
             let isValid = true;
@@ -334,16 +337,12 @@
             successMessage.style.display = 'none';
             
             try {
-                // Get backend URL - use current origin or construct from window location
+                // Get backend URL - use current origin (form is served from backend)
                 let backendUrl = window.location.origin;
                 
-                // If on localhost, try to use the backend port
-                if (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1')) {
-                    // Try to detect backend port from URL params or use default
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const backendPort = urlParams.get('backendPort') || '3000';
-                    backendUrl = `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
-                }
+                console.log('📝 Form submission started');
+                console.log('🔗 Backend URL:', backendUrl);
+                console.log('📋 Session ID:', sessionId);
                 
                 // Submit form data
                 const response = await fetch(`${backendUrl}/api/whatsapp/user-form-submit`, {
@@ -359,33 +358,40 @@
                     }),
                 });
                 
+                console.log('📡 Response status:', response.status);
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+                    throw new Error(errorData.message || `Server error: ${response.status}`);
+                }
+                
                 const data = await response.json();
+                console.log('✅ Response data:', data);
                 
                 if (data.success) {
                     // Show success message
                     loading.style.display = 'none';
                     successMessage.style.display = 'block';
+                    successMessage.textContent = `✅ ${data.message || 'Information saved! Payment link sent to WhatsApp.'}`;
                     
-                    // Redirect back to WhatsApp or show success
+                    // Show success page
                     setTimeout(() => {
-                        if (data.redirectUrl) {
-                            window.location.href = data.redirectUrl;
-                        } else {
-                            // Close window or show message
-                            document.body.innerHTML = `
-                                <div style="text-align: center; padding: 50px; font-family: sans-serif;">
-                                    <h1 style="color: #667eea;">✅ Information Saved!</h1>
-                                    <p style="margin-top: 20px; color: #666;">You can close this window and return to WhatsApp.</p>
-                                    <p style="margin-top: 10px; color: #999; font-size: 14px;">Your payment link will be sent to you shortly.</p>
+                        document.body.innerHTML = `
+                            <div style="text-align: center; padding: 50px; font-family: sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+                                <div style="background: white; border-radius: 20px; padding: 40px; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                                    <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
+                                    <h1 style="color: #333; margin-bottom: 20px;">Information Saved!</h1>
+                                    <p style="color: #666; margin-bottom: 10px;">Your payment link has been sent to your WhatsApp.</p>
+                                    <p style="color: #999; font-size: 14px; margin-top: 20px;">You can close this window and return to WhatsApp to complete payment.</p>
                                 </div>
-                            `;
-                        }
-                    }, 1500);
+                            </div>
+                        `;
+                    }, 2000);
                 } else {
                     throw new Error(data.message || 'Failed to save information');
                 }
             } catch (error) {
-                console.error('Error:', error);
+                console.error('❌ Form submission error:', error);
                 loading.style.display = 'none';
                 form.style.display = 'block';
                 errorAlert.style.display = 'block';

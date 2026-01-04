@@ -1870,9 +1870,11 @@ app.get('/', (_req, res) => {
 // WhatsApp User Form Submission Handler
 app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
   try {
+    console.log('📥 Form submission received:', JSON.stringify(req.body, null, 2));
     const { sessionId, fullName, phoneNumber, email } = req.body;
     
     if (!sessionId || !fullName || !phoneNumber || !email) {
+      console.warn('⚠️ Missing required fields:', { sessionId: !!sessionId, fullName: !!fullName, phoneNumber: !!phoneNumber, email: !!email });
       return res.status(400).json({ 
         success: false, 
         message: 'All fields are required' 
@@ -1880,6 +1882,7 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
     }
     
     // Find conversation state by sessionId
+    console.log('🔍 Searching for session:', sessionId);
     const stateResult = await pool
       .request()
       .input('sessionId', sql.NVarChar, sessionId)
@@ -1890,10 +1893,13 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
         ORDER BY cs.UpdatedAt DESC;
       `);
     
+    console.log('📋 Found conversation states:', stateResult.recordset.length);
+    
     if (!stateResult.recordset.length) {
+      console.warn('⚠️ Session not found:', sessionId);
       return res.status(404).json({ 
         success: false, 
-        message: 'Session not found. Please start over.' 
+        message: 'Session not found. Please start over by selecting a ticket again.' 
       });
     }
     
@@ -2061,6 +2067,8 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
       `✅ Order Created!\n\n📦 Order: ${orderNumber}\n💰 Amount: ₹${amount}\n\n💳 *Pay Now:*\n${paymentLink}\n\nClick the link above to complete your payment securely via Razorpay.\n\n✅ You'll receive confirmation once payment is successful.`,
     );
     
+    console.log('✅ Form submission successful, order created:', orderNumber);
+    
     res.json({ 
       success: true, 
       message: 'Information saved successfully! Payment link sent to WhatsApp.',
@@ -2069,7 +2077,11 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
     
   } catch (err) {
     console.error('❌ Form submission error:', err);
-    next(err);
+    console.error('❌ Error stack:', err.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || 'Internal server error. Please try again.' 
+    });
   }
 });
 
