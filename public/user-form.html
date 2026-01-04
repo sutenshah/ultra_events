@@ -226,43 +226,74 @@
     </div>
     
     <script>
-        // Get parameters from URL
-        const urlParams = new URLSearchParams(window.location.search);
-        const sessionId = urlParams.get('sessionId');
-        const ticketName = urlParams.get('ticketName') || 'Selected Ticket';
-        const ticketAmount = urlParams.get('ticketAmount') || '0';
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeForm();
+        });
         
-        // Display ticket info
-        document.getElementById('ticketName').textContent = ticketName;
-        document.getElementById('ticketAmount').textContent = `₹${ticketAmount}`;
-        
-        // Form validation
-        const form = document.getElementById('userForm');
-        const submitBtn = document.getElementById('submitBtn');
-        const loading = document.getElementById('loading');
-        const successMessage = document.getElementById('successMessage');
-        const errorAlert = document.getElementById('errorAlert');
+        function initializeForm() {
+            // Get parameters from URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const sessionId = urlParams.get('sessionId');
+            const ticketName = urlParams.get('ticketName') || 'Selected Ticket';
+            const ticketAmount = urlParams.get('ticketAmount') || '0';
+            
+            // Display ticket info
+            const ticketNameEl = document.getElementById('ticketName');
+            const ticketAmountEl = document.getElementById('ticketAmount');
+            if (ticketNameEl) ticketNameEl.textContent = ticketName;
+            if (ticketAmountEl) ticketAmountEl.textContent = `₹${ticketAmount}`;
+            
+            // Form validation
+            const form = document.getElementById('userForm');
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const successMessage = document.getElementById('successMessage');
+            const errorAlert = document.getElementById('errorAlert');
+            
+            if (!form || !submitBtn) {
+                console.error('Form elements not found!');
+                return;
+            }
         
         function showError(fieldId, message) {
-            const errorDiv = document.getElementById(fieldId + 'Error');
-            const fieldElement = document.getElementById(fieldId);
-            if (errorDiv) {
-                errorDiv.textContent = message;
-                errorDiv.style.display = 'block';
-            }
-            if (fieldElement) {
-                fieldElement.style.borderColor = '#e74c3c';
+            try {
+                const errorDivId = fieldId + 'Error';
+                const errorDiv = document.getElementById(errorDivId);
+                const fieldElement = document.getElementById(fieldId);
+                
+                if (errorDiv) {
+                    errorDiv.textContent = message;
+                    errorDiv.style.display = 'block';
+                } else {
+                    console.warn('Error div not found:', errorDivId);
+                }
+                
+                if (fieldElement) {
+                    fieldElement.style.borderColor = '#e74c3c';
+                } else {
+                    console.warn('Field element not found:', fieldId);
+                }
+            } catch (err) {
+                console.error('Error in showError:', err);
             }
         }
         
         function hideError(fieldId) {
-            const errorDiv = document.getElementById(fieldId + 'Error');
-            const fieldElement = document.getElementById(fieldId);
-            if (errorDiv) {
-                errorDiv.style.display = 'none';
-            }
-            if (fieldElement) {
-                fieldElement.style.borderColor = '#e0e0e0';
+            try {
+                const errorDivId = fieldId + 'Error';
+                const errorDiv = document.getElementById(errorDivId);
+                const fieldElement = document.getElementById(fieldId);
+                
+                if (errorDiv) {
+                    errorDiv.style.display = 'none';
+                }
+                
+                if (fieldElement) {
+                    fieldElement.style.borderColor = '#e0e0e0';
+                }
+            } catch (err) {
+                console.error('Error in hideError:', err);
             }
         }
         
@@ -275,43 +306,43 @@
             return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         }
         
-        // Real-time validation
-        const fullNameField = document.getElementById('fullName');
-        const phoneNumberField = document.getElementById('phoneNumber');
-        const emailField = document.getElementById('email');
-        
-        if (fullNameField) {
-            fullNameField.addEventListener('blur', function() {
-                if (this.value.trim().length < 2) {
-                    showError('fullName', 'Name must be at least 2 characters');
-                } else {
-                    hideError('fullName');
-                }
-            });
-        }
-        
-        if (phoneNumberField) {
-            phoneNumberField.addEventListener('blur', function() {
-                if (!validatePhone(this.value)) {
-                    showError('phoneNumber', 'Please enter a valid phone number (10+ digits)');
-                } else {
-                    hideError('phoneNumber');
-                }
-            });
-        }
-        
-        if (emailField) {
-            emailField.addEventListener('blur', function() {
-                if (!validateEmail(this.value)) {
-                    showError('email', 'Please enter a valid email address');
-                } else {
-                    hideError('email');
-                }
-            });
-        }
-        
-        // Form submission
-        form.addEventListener('submit', async function(e) {
+            // Real-time validation
+            const fullNameField = document.getElementById('fullName');
+            const phoneNumberField = document.getElementById('phoneNumber');
+            const emailField = document.getElementById('email');
+            
+            if (fullNameField) {
+                fullNameField.addEventListener('blur', function() {
+                    if (this.value.trim().length < 2) {
+                        showError('fullName', 'Name must be at least 2 characters');
+                    } else {
+                        hideError('fullName');
+                    }
+                });
+            }
+            
+            if (phoneNumberField) {
+                phoneNumberField.addEventListener('blur', function() {
+                    if (!validatePhone(this.value)) {
+                        showError('phoneNumber', 'Please enter a valid phone number (10+ digits)');
+                    } else {
+                        hideError('phoneNumber');
+                    }
+                });
+            }
+            
+            if (emailField) {
+                emailField.addEventListener('blur', function() {
+                    if (!validateEmail(this.value)) {
+                        showError('email', 'Please enter a valid email address');
+                    } else {
+                        hideError('email');
+                    }
+                });
+            }
+            
+            // Form submission
+            form.addEventListener('submit', async function(e) {
             e.preventDefault();
             console.log('📝 Form submit event triggered');
             
@@ -418,10 +449,13 @@
                 errorAlert.textContent = `❌ ${error.message || 'Something went wrong. Please try again.'}`;
                 submitBtn.disabled = false;
             }
-        });
-        
-        // Auto-focus first field
-        document.getElementById('fullName').focus();
+            });
+            
+            // Auto-focus first field
+            if (fullNameField) {
+                fullNameField.focus();
+            }
+        }
     </script>
 </body>
 </html>
