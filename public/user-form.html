@@ -334,8 +334,16 @@
             successMessage.style.display = 'none';
             
             try {
-                // Get backend URL
-                const backendUrl = window.location.origin.replace(/:\d+$/, ':3000');
+                // Get backend URL - use current origin or construct from window location
+                let backendUrl = window.location.origin;
+                
+                // If on localhost, try to use the backend port
+                if (backendUrl.includes('localhost') || backendUrl.includes('127.0.0.1')) {
+                    // Try to detect backend port from URL params or use default
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const backendPort = urlParams.get('backendPort') || '3000';
+                    backendUrl = `${window.location.protocol}//${window.location.hostname}:${backendPort}`;
+                }
                 
                 // Submit form data
                 const response = await fetch(`${backendUrl}/api/whatsapp/user-form-submit`, {

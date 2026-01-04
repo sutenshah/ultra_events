@@ -1414,13 +1414,34 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   stateData.sessionId = sessionId;
   
-  // Create form URL with ticket details
-  const backendUrl = process.env.BACKEND_URL || process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
+  // Get backend URL - prioritize BACKEND_URL, then RENDER_EXTERNAL_URL, then FRONTEND_URL
+  // For Render.com, use the service URL from environment
+  let backendUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || process.env.FRONTEND_URL;
+  
+  // If still not set, try to construct from common patterns
+  if (!backendUrl) {
+    // Check if we're on Render
+    if (process.env.RENDER) {
+      backendUrl = `https://${process.env.RENDER_SERVICE_NAME || 'ultraa-events'}.onrender.com`;
+    } else {
+      // Fallback - should be set in production via environment variable
+      console.warn('⚠️ BACKEND_URL not set, using fallback');
+      backendUrl = 'https://ultraa-events.onrender.com';
+    }
+  }
+  
+  // Ensure URL doesn't have trailing slash
+  backendUrl = backendUrl.replace(/\/$/, '');
+  
   const formUrl = `${backendUrl}/user-form.html?sessionId=${encodeURIComponent(sessionId)}&ticketName=${encodeURIComponent(selectedTicket.TicketName)}&ticketAmount=${encodeURIComponent(selectedTicket.Price)}`;
   
+  console.log('🔗 Form URL generated:', formUrl);
+  
+  // Send a cleaner message - WhatsApp will auto-detect the URL and make it clickable
+  // Format: Clean text with URL on separate line for better visibility
   await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nPlease fill in your details using the form below:\n\n🔗 ${formUrl}\n\nClick the link above to open the form, fill in your details, and submit.\n\n💡 Or type "START" to go back to the main menu.`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nTap the link below to complete your sign-up:\n\n${formUrl}\n\n💡 Or type "START" to go back to the main menu.`,
   );
   await updateConversationState(phoneNumber, 'awaiting_form_submit', stateData);
 }
