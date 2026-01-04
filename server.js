@@ -1184,52 +1184,20 @@ async function handleEventSelection(phoneNumber, messageText, stateData) {
   // Format event details nicely with emojis
   const eventDate = new Date(event.EventDate);
   const formattedDate = eventDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  // Format time - Use time string directly from database
+  // Format time - EventTime is now a string in database, use it directly
   let eventTime = '';
   if (event.EventTime) {
-    try {
-      // Handle different formats: Date object, Time string, or Time object
-      let timeStr = '';
-      
-      if (event.EventTime instanceof Date) {
-        // If it's a Date object, extract just the time part
-        const hours = String(event.EventTime.getHours()).padStart(2, '0');
-        const minutes = String(event.EventTime.getMinutes()).padStart(2, '0');
-        eventTime = `${hours}:${minutes}`;
+    const timeStr = String(event.EventTime).trim();
+    // Remove seconds if present (HH:MM:SS -> HH:MM)
+    if (timeStr.includes(':')) {
+      const parts = timeStr.split(':');
+      if (parts.length >= 2) {
+        eventTime = `${parts[0]}:${parts[1]}`;
       } else {
-        // It's a string or Time type from SQL
-        timeStr = String(event.EventTime).trim();
-        
-        // Remove any date part if present (e.g., "Thu Jan 01 1970 21:00:00 GMT+0000" -> "21:00")
-        if (timeStr.includes('GMT') || timeStr.includes('1970') || timeStr.includes('UTC') || timeStr.includes('Jan 01 1970')) {
-          // Extract time from date string using regex - look for HH:MM pattern
-          const timeMatch = timeStr.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
-          if (timeMatch) {
-            const hours = String(parseInt(timeMatch[1], 10)).padStart(2, '0');
-            const minutes = timeMatch[2];
-            eventTime = `${hours}:${minutes}`;
-            console.log(`✅ Extracted time from date string: "${timeStr}" -> "${eventTime}"`);
-          } else {
-            console.warn('⚠️ Could not extract time from:', timeStr);
-            eventTime = timeStr;
-          }
-        } else if (timeStr.includes(':')) {
-          // Normal time format (HH:MM:SS or HH:MM)
-          const parts = timeStr.split(':');
-          if (parts.length >= 2) {
-            const hours = String(parseInt(parts[0], 10)).padStart(2, '0');
-            const minutes = parts[1];
-            eventTime = `${hours}:${minutes}`;
-          } else {
-            eventTime = timeStr;
-          }
-        } else {
-          eventTime = timeStr;
-        }
+        eventTime = timeStr;
       }
-    } catch (err) {
-      console.warn('⚠️ Error formatting time:', event.EventTime, err.message);
-      eventTime = String(event.EventTime);
+    } else {
+      eventTime = timeStr;
     }
   }
   
@@ -1441,7 +1409,65 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
 
   await sendWhatsAppMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\nPlease provide your email address where we can send your ticket:\n\n💡 Or type "START" to go back to the main menu.`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 To complete your booking, please provide:\n\n1️⃣ *Full Name*\n2️⃣ *Phone Number*\n3️⃣ *Email Address*\n\nPlease start by sending your *Full Name*:\n\n💡 Or type "START" to go back to the main menu.`,
+  );
+  await updateConversationState(phoneNumber, 'awaiting_full_name', stateData);
+}
+
+async function handleFullNameStep(phoneNumber, messageText, stateData) {
+  // Handle "Back to Menu" button
+  if (messageText === 'back_to_menu' || messageText.toLowerCase() === 'back to menu' || messageText.toLowerCase() === 'start') {
+    await handleMainMenu(phoneNumber, 'view_events', stateData);
+    return;
+  }
+  
+  const fullName = messageText.trim();
+  if (fullName.length < 2) {
+    await sendWhatsAppMessage(phoneNumber, 'Please provide a valid full name (at least 2 characters).\n\n💡 Or type "START" to go back to the main menu.');
+    return;
+  }
+  
+  stateData.userFullName = fullName;
+  await sendWhatsAppMessage(
+    phoneNumber,
+    `✅ Name saved: ${fullName}\n\n📱 Now please provide your *Phone Number* (with country code, e.g., +919876543210):\n\n💡 Or type "START" to go back to the main menu.`
+  );
+  await updateConversationState(phoneNumber, 'awaiting_phone', stateData);
+}
+
+async function handlePhoneStep(phoneNumber, messageText, stateData) {
+  // Handle "Back to Menu" button
+  if (messageText === 'back_to_menu' || messageText.toLowerCase() === 'back to menu' || messageText.toLowerCase() === 'start') {
+    await handleMainMenu(phoneNumber, 'view_events', stateData);
+    return;
+  }
+  
+  let userPhone = messageText.trim();
+  // Remove spaces and format
+  userPhone = userPhone.replace(/\s+/g, '');
+  
+  // Validate phone number (should be 10+ digits)
+  const digitsOnly = userPhone.replace(/\D/g, '');
+  if (digitsOnly.length < 10) {
+    await sendWhatsAppMessage(phoneNumber, 'Please provide a valid phone number (at least 10 digits).\n\n💡 Or type "START" to go back to the main menu.');
+    return;
+  }
+  
+  // Ensure + prefix
+  if (!userPhone.startsWith('+')) {
+    if (userPhone.startsWith('91') && digitsOnly.length >= 12) {
+      userPhone = '+' + userPhone;
+    } else if (digitsOnly.length === 10) {
+      userPhone = '+91' + digitsOnly;
+    } else {
+      userPhone = '+' + digitsOnly;
+    }
+  }
+  
+  stateData.userPhone = userPhone;
+  await sendWhatsAppMessage(
+    phoneNumber,
+    `✅ Phone saved: ${userPhone}\n\n📧 Now please provide your *Email Address*:\n\n💡 Or type "START" to go back to the main menu.`
   );
   await updateConversationState(phoneNumber, 'awaiting_email', stateData);
 }
@@ -1454,24 +1480,60 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
   }
   
   const email = messageText.trim();
-  if (!email.includes('@')) {
+  if (!email.includes('@') || !email.includes('.')) {
     await sendWhatsAppMessage(phoneNumber, 'Please provide a valid email address.\n\n💡 Or type "START" to go back to the main menu.');
     return;
   }
+  
+  stateData.userEmail = email;
 
   // Format phone for database (without +)
   const phoneForDB = phoneNumber.replace(/^\+/, '');
-  const userResult = await pool
+  const userPhoneForDB = (stateData.userPhone || phoneNumber).replace(/^\+/, '');
+  const fullName = stateData.userFullName || 'Customer';
+  const userEmail = email;
+  
+  // Insert or update user in Users table
+  let userId;
+  const existingUser = await pool
     .request()
     .input('phone', sql.NVarChar, phoneForDB)
-    .query('SELECT UserID FROM Users WHERE PhoneNumber = @phone;');
+    .query('SELECT UserID, FullName, Email FROM Users WHERE PhoneNumber = @phone;');
 
-  if (!userResult.recordset.length) {
-    await sendWhatsAppMessage(phoneNumber, "User not found. Please type 'START' to restart.");
-    return;
+  if (existingUser.recordset.length > 0) {
+    // Update existing user
+    userId = existingUser.recordset[0].UserID;
+    await pool
+      .request()
+      .input('userId', sql.Int, userId)
+      .input('fullName', sql.NVarChar, fullName)
+      .input('email', sql.NVarChar, userEmail)
+      .input('phone', sql.NVarChar, userPhoneForDB)
+      .query(`
+        UPDATE Users 
+        SET FullName = @fullName, 
+            Email = @email,
+            PhoneNumber = @phone,
+            UpdatedAt = GETDATE()
+        WHERE UserID = @userId;
+      `);
+    console.log('✅ User updated:', userId);
+  } else {
+    // Create new user
+    const newUser = await pool
+      .request()
+      .input('fullName', sql.NVarChar, fullName)
+      .input('email', sql.NVarChar, userEmail)
+      .input('phone', sql.NVarChar, userPhoneForDB)
+      .query(`
+        INSERT INTO Users (FullName, Email, PhoneNumber, CreatedAt, UpdatedAt)
+        OUTPUT INSERTED.UserID
+        VALUES (@fullName, @email, @phone, GETDATE(), GETDATE());
+      `);
+    userId = newUser.recordset[0].UserID;
+    console.log('✅ New user created:', userId);
   }
 
-  const userId = userResult.recordset[0].UserID;
   const orderNumber = generateOrderNumber();
   const amount = stateData.selectedTicketPrice;
 
@@ -1479,10 +1541,11 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
   const userDetails = await pool
     .request()
     .input('userId', sql.Int, userId)
-    .query('SELECT FullName, PhoneNumber FROM Users WHERE UserID = @userId;');
+    .query('SELECT FullName, PhoneNumber, Email FROM Users WHERE UserID = @userId;');
   
-  const userName = userDetails.recordset[0]?.FullName || 'Customer';
-  const userPhone = userDetails.recordset[0]?.PhoneNumber || phoneForDB;
+  const userName = userDetails.recordset[0]?.FullName || fullName;
+  const userPhone = userDetails.recordset[0]?.PhoneNumber || userPhoneForDB;
+  const userEmailForPayment = userDetails.recordset[0]?.Email || userEmail;
 
   // Create Razorpay Payment Link using Payment Links API
   let paymentLink;
@@ -1505,7 +1568,7 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
       description: `Event Ticket Purchase - Order ${orderNumber}`,
       customer: {
         name: userName,
-        email: email,
+        email: userEmailForPayment,
         contact: userPhone.startsWith('+') ? userPhone : `+${userPhone}`,
       },
       notify: {
@@ -1553,7 +1616,7 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
     });
     
     const frontendUrl = process.env.FRONTEND_URL || 'https://ultraa-events.vercel.app';
-    paymentLink = `${frontendUrl}/payment?orderId=${razorpayOrder.id}&amount=${Math.round(amount * 100)}&key=${process.env.RAZORPAY_KEY_ID}&email=${encodeURIComponent(email)}`;
+    paymentLink = `${frontendUrl}/payment?orderId=${razorpayOrder.id}&amount=${Math.round(amount * 100)}&key=${process.env.RAZORPAY_KEY_ID}&email=${encodeURIComponent(userEmailForPayment)}`;
     
     await pool
       .request()
@@ -1563,10 +1626,10 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
       .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
       .input('razorpayOrderId', sql.NVarChar, razorpayOrder.id)
       .input('amount', sql.Decimal(10, 2), amount)
-      .input('email', sql.NVarChar, email)
+      .input('email', sql.NVarChar, userEmailForPayment)
       .query(`
-        INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status)
-        VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending');
+        INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status, Email)
+        VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending', @email);
       `);
   }
 
@@ -1584,10 +1647,10 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
     .input('ticketTypeId', sql.Int, stateData.selectedTicketId)
     .input('razorpayOrderId', sql.NVarChar, razorpayReferenceId)
     .input('amount', sql.Decimal(10, 2), amount)
-    .input('email', sql.NVarChar, email)
+    .input('email', sql.NVarChar, userEmailForPayment)
     .query(`
-      INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status)
-      VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending');
+      INSERT INTO Orders (OrderNumber, UserID, EventID, TicketTypeID, RazorpayOrderID, Amount, Status, Email)
+      VALUES (@orderNumber, @userId, @eventId, @ticketTypeId, @razorpayOrderId, @amount, 'pending', @email);
     `);
   
   console.log('✅ Order stored:', orderNumber);
@@ -1725,6 +1788,12 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
         break;
       case 'selecting_ticket':
         await handleTicketSelection(phoneNumber, messageText, stateData);
+        break;
+      case 'awaiting_full_name':
+        await handleFullNameStep(phoneNumber, messageText, stateData);
+        break;
+      case 'awaiting_phone':
+        await handlePhoneStep(phoneNumber, messageText, stateData);
         break;
       case 'awaiting_email':
         await handleEmailStep(phoneNumber, messageText, stateData);
@@ -2612,16 +2681,26 @@ async function processPaymentSuccess(orderId, paymentId) {
     });
     const qrCode = await generateQRCode(qrData);
     
-    // Update order
+    // Get user email from Users table to update Orders
+    const userEmailResult = await pool
+      .request()
+      .input('userId', sql.Int, order.UserID)
+      .query('SELECT Email FROM Users WHERE UserID = @userId;');
+    
+    const userEmail = userEmailResult.recordset[0]?.Email || null;
+    
+    // Update order with payment ID and email
     await pool
       .request()
       .input('orderId', sql.Int, orderId)
       .input('paymentId', sql.NVarChar, paymentId)
       .input('qrCode', sql.NVarChar, qrCode)
+      .input('email', sql.NVarChar, userEmail)
       .query(`
         UPDATE Orders
         SET Status = 'completed',
             RazorpayPaymentID = @paymentId,
+            Email = COALESCE(@email, Email),
             QRCode = @qrCode,
             UpdatedAt = GETDATE()
         WHERE OrderID = @orderId;
