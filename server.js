@@ -2872,10 +2872,10 @@ const paymentCheckAttempts = new Map();
 
 // Background job: Periodically check pending payments (fallback only)
 // This is a backup in case callback/webhook fails
-// Each payment will be checked maximum 10 times
+// Each payment will be checked maximum 10 times, then marked as failed
 async function checkPendingPayments() {
   try {
-    // Only log if there are actually orders to check (reduce noise)
+    // Get ALL pending orders with payment links (older than 1 minute to avoid checking brand new orders)
     const pendingOrders = await pool
       .request()
       .query(`
@@ -2884,29 +2884,44 @@ async function checkPendingPayments() {
         WHERE Status = 'pending' 
           AND RazorpayOrderID LIKE 'plink_%'
           AND CreatedAt > DATEADD(hour, -24, GETDATE())
-          AND CreatedAt < DATEADD(minute, -5, GETDATE())
-        ORDER BY CreatedAt ASC
-        OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY;
+          AND CreatedAt < DATEADD(minute, -1, GETDATE())
+        ORDER BY CreatedAt ASC;
       `);
     
     if (pendingOrders.recordset.length === 0) {
       return; // No pending payments to check
     }
     
-    console.log(`🔄 Background check: Found ${pendingOrders.recordset.length} pending orders (checking oldest first)`);
+    console.log(`🔄 Background check: Found ${pendingOrders.recordset.length} pending orders (checking all)`);
     
     let processedCount = 0;
-    let skippedCount = 0;
+    let failedCount = 0;
     
     for (const order of pendingOrders.recordset) {
       try {
         // Get current check count for this order
         const currentAttempts = paymentCheckAttempts.get(order.OrderID) || 0;
         
-        // Skip if already checked 10 times
+        // If already checked 10 times, mark as failed
         if (currentAttempts >= 10) {
-          skippedCount++;
-          console.log(`⏭️  Skipping order ${order.OrderNumber} - already checked ${currentAttempts} times (max 10)`);
+          // Check if already marked as failed
+          const orderCheck = await pool
+            .request()
+            .input('orderId', sql.Int, order.OrderID)
+            .query('SELECT Status FROM Orders WHERE OrderID = @orderId;');
+          
+          if (orderCheck.recordset[0]?.Status === 'pending') {
+            // Mark as failed after 10 attempts
+            await pool
+              .request()
+              .input('orderId', sql.Int, order.OrderID)
+              .query('UPDATE Orders SET Status = \'failed\' WHERE OrderID = @orderId;');
+            
+            console.log(`❌ Order ${order.OrderNumber} marked as failed after 10 check attempts`);
+            failedCount++;
+            // Remove from tracking
+            paymentCheckAttempts.delete(order.OrderID);
+          }
           continue;
         }
         
@@ -2920,27 +2935,27 @@ async function checkPendingPayments() {
         processedCount++;
         
         // Small delay between checks to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (err) {
         console.error(`❌ Error checking order ${order.OrderNumber}:`, err.message);
       }
     }
     
-    if (processedCount > 0 || skippedCount > 0) {
-      console.log(`✅ Background check completed: Processed ${processedCount} orders, Skipped ${skippedCount} orders (max attempts reached)`);
+    if (processedCount > 0 || failedCount > 0) {
+      console.log(`✅ Background check completed: Processed ${processedCount} orders, Failed ${failedCount} orders (max attempts reached)`);
     }
   } catch (err) {
     console.error('❌ Error in checkPendingPayments:', err.message);
   }
 }
 
-// Run payment check every 5 minutes (fallback - in case callback doesn't work)
-// Only checks orders older than 5 minutes to avoid checking brand new orders
+// Run payment check every 1 minute (fallback - in case callback doesn't work)
+// Checks all pending orders older than 1 minute
 setInterval(() => {
   checkPendingPayments().catch(err => {
     console.error('❌ Background payment check error:', err.message);
   });
-}, 300000); // 5 minutes - fallback check (reduced frequency)
+}, 60000); // 1 minute - check all pending payments
 
 // Helper function to process successful payment
 async function processPaymentSuccess(orderId, paymentId) {
@@ -2998,8 +3013,7 @@ async function processPaymentSuccess(orderId, paymentId) {
         SET Status = 'completed',
             RazorpayPaymentID = @paymentId,
             Email = COALESCE(@email, Email),
-            QRCode = @qrCode,
-            UpdatedAt = GETDATE()
+            QRCode = @qrCode
         WHERE OrderID = @orderId;
       `);
     
