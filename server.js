@@ -1540,15 +1540,14 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
       .input('userId', sql.Int, userId)
       .input('fullName', sql.NVarChar, fullName)
       .input('email', sql.NVarChar, userEmail)
-      .input('phone', sql.NVarChar, userPhoneForDB)
-      .query(`
-        UPDATE Users 
-        SET FullName = @fullName, 
-            Email = @email,
-            PhoneNumber = @phone,
-            UpdatedAt = GETDATE()
-        WHERE UserID = @userId;
-      `);
+        .input('phone', sql.NVarChar, userPhoneForDB)
+        .query(`
+          UPDATE Users 
+          SET FullName = @fullName, 
+              Email = @email,
+              PhoneNumber = @phone
+          WHERE UserID = @userId;
+        `);
     console.log('✅ User updated:', userId);
   } else {
     // Create new user
@@ -1558,9 +1557,9 @@ async function handleEmailStep(phoneNumber, messageText, stateData) {
       .input('email', sql.NVarChar, userEmail)
       .input('phone', sql.NVarChar, userPhoneForDB)
       .query(`
-        INSERT INTO Users (FullName, Email, PhoneNumber, CreatedAt, UpdatedAt)
+        INSERT INTO Users (FullName, Email, PhoneNumber, CreatedAt)
         OUTPUT INSERTED.UserID
-        VALUES (@fullName, @email, @phone, GETDATE(), GETDATE());
+        VALUES (@fullName, @email, @phone, GETDATE());
       `);
     userId = newUser.recordset[0].UserID;
     console.log('✅ New user created:', userId);
@@ -1931,8 +1930,7 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
           UPDATE Users 
           SET FullName = @fullName, 
               Email = @email,
-              PhoneNumber = @phone,
-              UpdatedAt = GETDATE()
+              PhoneNumber = @phone
           WHERE UserID = @userId;
         `);
       console.log('✅ User updated via form:', userId);
@@ -1944,9 +1942,9 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
         .input('email', sql.NVarChar, email)
         .input('phone', sql.NVarChar, phoneForDBWithCountry)
         .query(`
-          INSERT INTO Users (FullName, Email, PhoneNumber, CreatedAt, UpdatedAt)
+          INSERT INTO Users (FullName, Email, PhoneNumber, CreatedAt)
           OUTPUT INSERTED.UserID
-          VALUES (@fullName, @email, @phone, GETDATE(), GETDATE());
+          VALUES (@fullName, @email, @phone, GETDATE());
         `);
       userId = newUser.recordset[0].UserID;
       console.log('✅ New user created via form:', userId);
