@@ -1889,7 +1889,7 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
         SELECT TOP 1 cs.* 
         FROM ConversationState cs
         WHERE cs.StateData LIKE '%' + @sessionId + '%'
-        ORDER BY cs.UpdatedAt DESC;
+        ORDER BY cs.StateID DESC;
       `);
     
     console.log('📋 Found conversation states:', stateResult.recordset.length);
@@ -1965,8 +1965,7 @@ app.post('/api/whatsapp/user-form-submit', async (req, res, next) => {
       .query(`
         UPDATE ConversationState
         SET StateData = @stateData,
-            CurrentStep = @currentStep,
-            UpdatedAt = GETDATE()
+            CurrentStep = @currentStep
         WHERE PhoneNumber = @phone;
       `);
     
