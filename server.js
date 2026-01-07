@@ -18,6 +18,42 @@ const axios = require('axios');
 require('dotenv').config();
 
 // ------------------------------------------------------------
+// Short URL Service (In-Memory Store)
+// ------------------------------------------------------------
+// Map short IDs to full URLs
+const shortUrlMap = new Map();
+
+// Generate short ID (6-8 characters)
+function generateShortId() {
+  return Math.random().toString(36).substring(2, 10); // 8 chars
+}
+
+// Create short URL
+function createShortUrl(fullUrl) {
+  let shortId;
+  let attempts = 0;
+  
+  // Ensure unique short ID (max 10 attempts)
+  do {
+    shortId = generateShortId();
+    attempts++;
+  } while (shortUrlMap.has(shortId) && attempts < 10);
+  
+  if (attempts >= 10) {
+    // Fallback: use timestamp-based ID
+    shortId = Date.now().toString(36);
+  }
+  
+  // Store mapping (expires after 24 hours - optional cleanup)
+  shortUrlMap.set(shortId, {
+    url: fullUrl,
+    createdAt: Date.now(),
+  });
+  
+  return shortId;
+}
+
+// ------------------------------------------------------------
 // App & Middleware
 // ------------------------------------------------------------
 const app = express();
@@ -1435,19 +1471,25 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   // Ensure URL doesn't have trailing slash
   backendUrl = backendUrl.replace(/\/$/, '');
   
-  const formUrl = `${backendUrl}/user-form.html?sessionId=${encodeURIComponent(sessionId)}&ticketName=${encodeURIComponent(selectedTicket.TicketName)}&ticketAmount=${encodeURIComponent(selectedTicket.Price)}`;
+  // Create full form URL
+  const fullFormUrl = `${backendUrl}/user-form.html?sessionId=${encodeURIComponent(sessionId)}&ticketName=${encodeURIComponent(selectedTicket.TicketName)}&ticketAmount=${encodeURIComponent(selectedTicket.Price)}`;
   
-  console.log('🔗 Form URL generated:', formUrl);
+  // Create short URL for cleaner display
+  const shortId = createShortUrl(fullFormUrl);
+  const shortUrl = `${backendUrl}/s/${shortId}`;
+  
+  console.log('🔗 Form URL generated:', fullFormUrl);
+  console.log('🔗 Short URL created:', shortUrl);
   
   // Store form URL in state for button click handler
-  stateData.formUrl = formUrl;
+  stateData.formUrl = fullFormUrl;
   
   // WhatsApp doesn't support URL buttons in button messages
   // Solution: Put URL in message body (WhatsApp auto-detects and makes it clickable)
-  // Format it nicely with "Complete SignUp" as a label
+  // Use short URL for cleaner appearance
   await sendButtonMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 *Complete SignUp:*\n${formUrl}\n\nTap the link above to open the sign-up form.`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 *Complete SignUp:*\n${shortUrl}\n\nTap the link above to open the sign-up form.`,
     [
       { id: 'back_to_menu', title: '🏠 Back to Home' },
     ]
@@ -1871,6 +1913,36 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
 
 // ------------------------------------------------------------
 // Routes - Health & Core APIs
+// ------------------------------------------------------------
+// ------------------------------------------------------------
+// Short URL Redirect Endpoint
+// ------------------------------------------------------------
+app.get('/s/:shortId', (req, res) => {
+  const { shortId } = req.params;
+  const urlData = shortUrlMap.get(shortId);
+  
+  if (urlData) {
+    // Redirect to the full URL
+    console.log(`🔗 Short URL redirect: /s/${shortId} -> ${urlData.url}`);
+    return res.redirect(urlData.url);
+  } else {
+    // Short URL not found
+    console.warn(`⚠️ Short URL not found: /s/${shortId}`);
+    return res.status(404).send(`
+      <html>
+        <head><title>Link Not Found</title></head>
+        <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+          <h1>Link Not Found</h1>
+          <p>This link has expired or is invalid.</p>
+          <p>Please request a new link from WhatsApp.</p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// ------------------------------------------------------------
+// Health & Core Routes
 // ------------------------------------------------------------
 app.get('/', (_req, res) => {
   res.json({
