@@ -438,8 +438,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize navigation
     initNavigation();
     
-    // Load initial view
-    loadDashboard();
+    // Check URL params for view
+    const urlParams = new URLSearchParams(window.location.search);
+    const viewParam = urlParams.get('view');
+    if (viewParam) {
+        switchView(viewParam);
+    } else {
+        // Load initial view
+        loadDashboard();
+    }
+
+    // Register Service Worker for PWA
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+                console.log('SW registered: ', registration);
+            })
+            .catch((registrationError) => {
+                console.log('SW registration failed: ', registrationError);
+            });
+    }
 });
 
 // Cleanup on page unload
