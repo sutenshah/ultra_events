@@ -2619,7 +2619,53 @@ app.post('/api/scan', async (req, res, next) => {
   }
 });
 
-// Admin login (basic)
+// ============================================================
+// ADMIN AUTHENTICATION & MIDDLEWARE
+// ============================================================
+
+// Admin authentication middleware
+const authenticateAdmin = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Verify admin still exists and is active
+    const adminResult = await pool
+      .request()
+      .input('adminId', sql.Int, decoded.adminId)
+      .query('SELECT AdminID, Username, FullName, Email, Role FROM AdminUsers WHERE AdminID = @adminId AND IsActive = 1;');
+
+    if (!adminResult.recordset.length) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    }
+
+    req.admin = adminResult.recordset[0];
+    req.admin.role = decoded.role;
+    next();
+  } catch (err) {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+    }
+    next(err);
+  }
+};
+
+// Role-based access control middleware
+const requireRole = (...allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.admin || !allowedRoles.includes(req.admin.role)) {
+      return res.status(403).json({ success: false, message: 'Insufficient permissions' });
+    }
+    next();
+  };
+};
+
+// Admin login
 app.post('/api/admin/login', async (req, res, next) => {
   try {
     const { username, password } = req.body;
@@ -2638,13 +2684,703 @@ app.post('/api/admin/login', async (req, res, next) => {
 
     const admin = adminResult.recordset[0];
     const valid = await bcrypt.compare(password, admin.PasswordHash);
-    if (!valid) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    if (!valid) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
 
-    const token = jwt.sign({ adminId: admin.AdminID, role: admin.Role }, process.env.JWT_SECRET, {
-      expiresIn: '24h',
+    // Update last login
+    await pool
+      .request()
+      .input('adminId', sql.Int, admin.AdminID)
+      .query('UPDATE AdminUsers SET LastLogin = GETDATE() WHERE AdminID = @adminId;');
+
+    const token = jwt.sign(
+      { adminId: admin.AdminID, role: admin.Role },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      admin: {
+        adminId: admin.AdminID,
+        username: admin.Username,
+        fullName: admin.FullName,
+        email: admin.Email,
+        role: admin.Role,
+      },
     });
+  } catch (err) {
+    next(err);
+  }
+});
 
-    res.json({ success: true, token });
+// Get current admin profile
+app.get('/api/admin/me', authenticateAdmin, async (req, res, next) => {
+  try {
+    res.json({
+      success: true,
+      admin: req.admin,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// ADMIN DASHBOARD ENDPOINTS
+// ============================================================
+
+// Dashboard - Get KPIs and statistics
+app.get('/api/admin/dashboard', authenticateAdmin, async (req, res, next) => {
+  try {
+    // Total Events
+    const eventsResult = await pool
+      .request()
+      .query('SELECT COUNT(*) as total FROM Events WHERE IsActive = 1;');
+    const totalEvents = eventsResult.recordset[0]?.total || 0;
+
+    // Tickets Sold (from completed orders)
+    const ticketsResult = await pool
+      .request()
+      .query(`
+        SELECT COUNT(*) as total 
+        FROM Orders 
+        WHERE Status = 'completed';
+      `);
+    const ticketsSold = ticketsResult.recordset[0]?.total || 0;
+
+    // Total Revenue (from completed orders)
+    const revenueResult = await pool
+      .request()
+      .query(`
+        SELECT ISNULL(SUM(Amount), 0) as total 
+        FROM Orders 
+        WHERE Status = 'completed';
+      `);
+    const totalRevenue = parseFloat(revenueResult.recordset[0]?.total || 0);
+
+    // Pending Orders
+    const pendingResult = await pool
+      .request()
+      .query('SELECT COUNT(*) as total FROM Orders WHERE Status = \'pending\';');
+    const pendingOrders = pendingResult.recordset[0]?.total || 0;
+
+    // Recent Events with stats
+    const recentEventsResult = await pool
+      .request()
+      .query(`
+        SELECT TOP 10
+          e.EventID,
+          e.EventName,
+          e.EventDate,
+          e.EventTime,
+          e.Venue,
+          COUNT(DISTINCT CASE WHEN o.Status = 'completed' THEN o.OrderID END) as Tickets,
+          ISNULL(SUM(CASE WHEN o.Status = 'completed' THEN o.Amount ELSE 0 END), 0) as Revenue
+        FROM Events e
+        LEFT JOIN Orders o ON e.EventID = o.EventID
+        WHERE e.IsActive = 1
+        GROUP BY e.EventID, e.EventName, e.EventDate, e.EventTime, e.Venue
+        ORDER BY e.EventDate DESC;
+      `);
+
+    const recentEvents = recentEventsResult.recordset.map(event => ({
+      id: event.EventID,
+      name: event.EventName,
+      date: new Date(event.EventDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+      tickets: parseInt(event.Tickets || 0),
+      revenue: parseFloat(event.Revenue || 0),
+    }));
+
+    res.json({
+      success: true,
+      stats: {
+        totalEvents: parseInt(totalEvents),
+        ticketsSold: parseInt(ticketsSold),
+        totalRevenue: totalRevenue,
+        pendingOrders: parseInt(pendingOrders),
+      },
+      recentEvents,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// EVENTS MANAGEMENT ENDPOINTS
+// ============================================================
+
+// Get all events
+app.get('/api/admin/events', authenticateAdmin, async (req, res, next) => {
+  try {
+    const result = await pool
+      .request()
+      .query(`
+        SELECT 
+          e.EventID,
+          e.EventName,
+          e.EventDate,
+          e.EventTime,
+          e.Venue,
+          e.Description,
+          e.ImageURL,
+          e.IsActive,
+          COUNT(DISTINCT CASE WHEN o.Status = 'completed' THEN o.OrderID END) as TicketsSold,
+          ISNULL(SUM(CASE WHEN o.Status = 'completed' THEN o.Amount ELSE 0 END), 0) as Revenue
+        FROM Events e
+        LEFT JOIN Orders o ON e.EventID = o.EventID
+        GROUP BY e.EventID, e.EventName, e.EventDate, e.EventTime, e.Venue, e.Description, e.ImageURL, e.IsActive
+        ORDER BY e.EventDate DESC;
+      `);
+
+    const events = result.recordset.map(event => ({
+      id: event.EventID,
+      name: event.EventName,
+      date: new Date(event.EventDate).toISOString().split('T')[0],
+      time: event.EventTime,
+      venue: event.Venue,
+      description: event.Description,
+      imageURL: event.ImageURL,
+      isActive: event.IsActive,
+      ticketsSold: parseInt(event.TicketsSold || 0),
+      revenue: parseFloat(event.Revenue || 0),
+    }));
+
+    res.json({ success: true, events });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get single event by ID
+app.get('/api/admin/events/:id', authenticateAdmin, async (req, res, next) => {
+  try {
+    const eventId = parseInt(req.params.id);
+    if (!eventId) {
+      return res.status(400).json({ success: false, message: 'Invalid event ID' });
+    }
+
+    const eventResult = await pool
+      .request()
+      .input('eventId', sql.Int, eventId)
+      .query(`
+        SELECT * FROM Events WHERE EventID = @eventId;
+      `);
+
+    if (!eventResult.recordset.length) {
+      return res.status(404).json({ success: false, message: 'Event not found' });
+    }
+
+    const event = eventResult.recordset[0];
+
+    // Get ticket types for this event
+    const ticketsResult = await pool
+      .request()
+      .input('eventId', sql.Int, eventId)
+      .query('SELECT * FROM TicketTypes WHERE EventID = @eventId ORDER BY Price ASC;');
+
+    res.json({
+      success: true,
+      event: {
+        id: event.EventID,
+        name: event.EventName,
+        date: new Date(event.EventDate).toISOString().split('T')[0],
+        time: event.EventTime,
+        venue: event.Venue,
+        description: event.Description,
+        imageURL: event.ImageURL,
+        isActive: event.IsActive,
+      },
+      ticketTypes: ticketsResult.recordset.map(t => ({
+        id: t.TicketTypeID,
+        name: t.TicketName,
+        price: parseFloat(t.Price),
+        availableQuantity: t.AvailableQuantity,
+        totalQuantity: t.TotalQuantity,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Create new event
+app.post('/api/admin/events', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {
+  try {
+    const { name, date, time, venue, description, imageURL, ticketTypes } = req.body;
+
+    if (!name || !date || !time || !venue) {
+      return res.status(400).json({ success: false, message: 'Event name, date, time, and venue are required' });
+    }
+
+    // Insert event
+    const eventResult = await pool
+      .request()
+      .input('name', sql.NVarChar, name)
+      .input('date', sql.Date, date)
+      .input('time', sql.NVarChar, time)
+      .input('venue', sql.NVarChar, venue)
+      .input('description', sql.NVarChar, description || '')
+      .input('imageURL', sql.NVarChar, imageURL || '')
+      .query(`
+        INSERT INTO Events (EventName, EventDate, EventTime, Venue, Description, ImageURL)
+        OUTPUT INSERTED.EventID
+        VALUES (@name, @date, @time, @venue, @description, @imageURL);
+      `);
+
+    const eventId = eventResult.recordset[0].EventID;
+
+    // Insert ticket types if provided
+    if (ticketTypes && Array.isArray(ticketTypes) && ticketTypes.length > 0) {
+      for (const ticket of ticketTypes) {
+        if (ticket.name && ticket.price !== undefined) {
+          await pool
+            .request()
+            .input('eventId', sql.Int, eventId)
+            .input('ticketName', sql.NVarChar, ticket.name)
+            .input('price', sql.Decimal(10, 2), ticket.price)
+            .input('availableQuantity', sql.Int, ticket.availableQuantity || 100)
+            .input('totalQuantity', sql.Int, ticket.totalQuantity || ticket.availableQuantity || 100)
+            .query(`
+              INSERT INTO TicketTypes (EventID, TicketName, Price, AvailableQuantity, TotalQuantity)
+              VALUES (@eventId, @ticketName, @price, @availableQuantity, @totalQuantity);
+            `);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Event created successfully',
+      eventId,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Update event
+app.put('/api/admin/events/:id', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {
+  try {
+    const eventId = parseInt(req.params.id);
+    const { name, date, time, venue, description, imageURL, isActive } = req.body;
+
+    if (!eventId) {
+      return res.status(400).json({ success: false, message: 'Invalid event ID' });
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const request = pool.request().input('eventId', sql.Int, eventId);
+
+    if (name !== undefined) {
+      updates.push('EventName = @name');
+      request.input('name', sql.NVarChar, name);
+    }
+    if (date !== undefined) {
+      updates.push('EventDate = @date');
+      request.input('date', sql.Date, date);
+    }
+    if (time !== undefined) {
+      updates.push('EventTime = @time');
+      request.input('time', sql.NVarChar, time);
+    }
+    if (venue !== undefined) {
+      updates.push('Venue = @venue');
+      request.input('venue', sql.NVarChar, venue);
+    }
+    if (description !== undefined) {
+      updates.push('Description = @description');
+      request.input('description', sql.NVarChar, description);
+    }
+    if (imageURL !== undefined) {
+      updates.push('ImageURL = @imageURL');
+      request.input('imageURL', sql.NVarChar, imageURL);
+    }
+    if (isActive !== undefined) {
+      updates.push('IsActive = @isActive');
+      request.input('isActive', sql.Bit, isActive ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    updates.push('UpdatedAt = GETDATE()');
+
+    await request.query(`
+      UPDATE Events 
+      SET ${updates.join(', ')}
+      WHERE EventID = @eventId;
+    `);
+
+    res.json({ success: true, message: 'Event updated successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete event (soft delete by setting IsActive = 0)
+app.delete('/api/admin/events/:id', authenticateAdmin, requireRole('superadmin'), async (req, res, next) => {
+  try {
+    const eventId = parseInt(req.params.id);
+    if (!eventId) {
+      return res.status(400).json({ success: false, message: 'Invalid event ID' });
+    }
+
+    await pool
+      .request()
+      .input('eventId', sql.Int, eventId)
+      .query('UPDATE Events SET IsActive = 0, UpdatedAt = GETDATE() WHERE EventID = @eventId;');
+
+    res.json({ success: true, message: 'Event deleted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// ORDERS MANAGEMENT ENDPOINTS
+// ============================================================
+
+// Get all orders (completed, sorted by date)
+app.get('/api/admin/orders', authenticateAdmin, async (req, res, next) => {
+  try {
+    const { status, limit = 100, offset = 0 } = req.query;
+
+    let query = `
+      SELECT 
+        o.OrderID,
+        o.OrderNumber,
+        o.Status,
+        o.Amount,
+        o.CreatedAt,
+        o.IsScanned,
+        o.ScannedAt,
+        o.ScannedBy,
+        u.FullName as CustomerName,
+        u.PhoneNumber,
+        u.Email,
+        e.EventName,
+        tt.TicketName
+      FROM Orders o
+      JOIN Users u ON o.UserID = u.UserID
+      JOIN Events e ON o.EventID = e.EventID
+      JOIN TicketTypes tt ON o.TicketTypeID = tt.TicketTypeID
+    `;
+
+    const request = pool.request();
+
+    if (status) {
+      query += ' WHERE o.Status = @status';
+      request.input('status', sql.NVarChar, status);
+    } else {
+      // Default: show completed orders
+      query += ' WHERE o.Status = \'completed\'';
+    }
+
+    query += ' ORDER BY o.CreatedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;';
+    request.input('offset', sql.Int, parseInt(offset));
+    request.input('limit', sql.Int, parseInt(limit));
+
+    const result = await request.query(query);
+
+    const orders = result.recordset.map(order => ({
+      id: order.OrderID,
+      orderNumber: order.OrderNumber,
+      customer: order.CustomerName,
+      event: order.EventName,
+      ticketType: order.TicketName,
+      amount: parseFloat(order.Amount),
+      status: order.Status,
+      isScanned: order.IsScanned,
+      scannedAt: order.ScannedAt,
+      scannedBy: order.ScannedBy,
+      createdAt: order.CreatedAt,
+    }));
+
+    res.json({ success: true, orders });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// QR SCAN ENDPOINTS
+// ============================================================
+
+// Scan QR code and validate ticket
+app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
+  try {
+    const { qrData } = req.body;
+
+    if (!qrData) {
+      return res.status(400).json({ success: false, message: 'QR data is required' });
+    }
+
+    // QR code contains order number - extract it
+    let orderNumber = qrData;
+    
+    // If QR is a full URL or contains order number, extract it
+    if (qrData.includes('OrderNumber=')) {
+      const match = qrData.match(/OrderNumber=([^&]+)/);
+      if (match) orderNumber = decodeURIComponent(match[1]);
+    } else if (qrData.includes('order=')) {
+      const match = qrData.match(/order=([^&]+)/);
+      if (match) orderNumber = decodeURIComponent(match[1]);
+    }
+
+    // Find order by order number
+    const orderResult = await pool
+      .request()
+      .input('orderNumber', sql.NVarChar, orderNumber)
+      .query(`
+        SELECT 
+          o.*,
+          u.FullName as CustomerName,
+          e.EventName,
+          e.EventDate,
+          tt.TicketName
+        FROM Orders o
+        JOIN Users u ON o.UserID = u.UserID
+        JOIN Events e ON o.EventID = e.EventID
+        JOIN TicketTypes tt ON o.TicketTypeID = tt.TicketTypeID
+        WHERE o.OrderNumber = @orderNumber;
+      `);
+
+    if (!orderResult.recordset.length) {
+      return res.status(404).json({ success: false, message: 'Ticket not found' });
+    }
+
+    const order = orderResult.recordset[0];
+
+    // Check if order is completed
+    if (order.Status !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Ticket payment not completed',
+        order: {
+          orderNumber: order.OrderNumber,
+          status: order.Status,
+        },
+      });
+    }
+
+    // Check if already scanned
+    if (order.IsScanned) {
+      return res.json({
+        success: true,
+        message: 'Ticket already scanned',
+        scanned: true,
+        order: {
+          orderNumber: order.OrderNumber,
+          customerName: order.CustomerName,
+          eventName: order.EventName,
+          ticketType: order.TicketName,
+          scannedAt: order.ScannedAt,
+          scannedBy: order.ScannedBy,
+        },
+      });
+    }
+
+    // Mark as scanned
+    await pool
+      .request()
+      .input('orderId', sql.Int, order.OrderID)
+      .input('scannedBy', sql.NVarChar, req.admin.Username || req.admin.FullName)
+      .query(`
+        UPDATE Orders 
+        SET IsScanned = 1, 
+            ScannedAt = GETDATE(), 
+            ScannedBy = @scannedBy
+        WHERE OrderID = @orderId;
+      `);
+
+    res.json({
+      success: true,
+      message: 'Ticket scanned successfully',
+      scanned: true,
+      order: {
+        orderNumber: order.OrderNumber,
+        customerName: order.CustomerName,
+        eventName: order.EventName,
+        eventDate: order.EventDate,
+        ticketType: order.TicketName,
+        amount: parseFloat(order.Amount),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================
+// USER MANAGEMENT ENDPOINTS (Create Scanner Users)
+// ============================================================
+
+// Get all admin users
+app.get('/api/admin/users', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {
+  try {
+    const result = await pool
+      .request()
+      .query(`
+        SELECT 
+          AdminID,
+          Username,
+          FullName,
+          Email,
+          Role,
+          IsActive,
+          CreatedAt,
+          LastLogin
+        FROM AdminUsers
+        ORDER BY CreatedAt DESC;
+      `);
+
+    const users = result.recordset.map(user => ({
+      id: user.AdminID,
+      username: user.Username,
+      fullName: user.FullName,
+      email: user.Email,
+      role: user.Role,
+      isActive: user.IsActive,
+      createdAt: user.CreatedAt,
+      lastLogin: user.LastLogin,
+    }));
+
+    res.json({ success: true, users });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Create new user (scanner or admin)
+app.post('/api/admin/users', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {
+  try {
+    const { username, password, fullName, email, role = 'scanner' } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, message: 'Username and password are required' });
+    }
+
+    // Validate role
+    if (!['admin', 'superadmin', 'scanner'].includes(role)) {
+      return res.status(400).json({ success: false, message: 'Invalid role. Must be admin, superadmin, or scanner' });
+    }
+
+    // Check if username already exists
+    const existingUser = await pool
+      .request()
+      .input('username', sql.NVarChar, username)
+      .query('SELECT AdminID FROM AdminUsers WHERE Username = @username;');
+
+    if (existingUser.recordset.length > 0) {
+      return res.status(400).json({ success: false, message: 'Username already exists' });
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Insert user
+    const result = await pool
+      .request()
+      .input('username', sql.NVarChar, username)
+      .input('passwordHash', sql.NVarChar, passwordHash)
+      .input('fullName', sql.NVarChar, fullName || '')
+      .input('email', sql.NVarChar, email || '')
+      .input('role', sql.NVarChar, role)
+      .query(`
+        INSERT INTO AdminUsers (Username, PasswordHash, FullName, Email, Role)
+        OUTPUT INSERTED.AdminID
+        VALUES (@username, @passwordHash, @fullName, @email, @role);
+      `);
+
+    res.json({
+      success: true,
+      message: 'User created successfully',
+      userId: result.recordset[0].AdminID,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Update user
+app.put('/api/admin/users/:id', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const { fullName, email, role, isActive, password } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID' });
+    }
+
+    const updates = [];
+    const request = pool.request().input('userId', sql.Int, userId);
+
+    if (fullName !== undefined) {
+      updates.push('FullName = @fullName');
+      request.input('fullName', sql.NVarChar, fullName);
+    }
+    if (email !== undefined) {
+      updates.push('Email = @email');
+      request.input('email', sql.NVarChar, email);
+    }
+    if (role !== undefined) {
+      if (!['admin', 'superadmin', 'scanner'].includes(role)) {
+        return res.status(400).json({ success: false, message: 'Invalid role' });
+      }
+      updates.push('Role = @role');
+      request.input('role', sql.NVarChar, role);
+    }
+    if (isActive !== undefined) {
+      updates.push('IsActive = @isActive');
+      request.input('isActive', sql.Bit, isActive ? 1 : 0);
+    }
+    if (password) {
+      const passwordHash = await bcrypt.hash(password, 10);
+      updates.push('PasswordHash = @passwordHash');
+      request.input('passwordHash', sql.NVarChar, passwordHash);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, message: 'No fields to update' });
+    }
+
+    await request.query(`
+      UPDATE AdminUsers 
+      SET ${updates.join(', ')}
+      WHERE AdminID = @userId;
+    `);
+
+    res.json({ success: true, message: 'User updated successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete user (soft delete)
+app.delete('/api/admin/users/:id', authenticateAdmin, requireRole('superadmin'), async (req, res, next) => {
+  try {
+    const userId = parseInt(req.params.id);
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID' });
+    }
+
+    // Don't allow deleting yourself
+    if (userId === req.admin.adminId) {
+      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
+    }
+
+    await pool
+      .request()
+      .input('userId', sql.Int, userId)
+      .query('UPDATE AdminUsers SET IsActive = 0 WHERE AdminID = @userId;');
+
+    res.json({ success: true, message: 'User deleted successfully' });
   } catch (err) {
     next(err);
   }
@@ -3379,8 +4115,8 @@ async function createTables() {
       Username NVARCHAR(50) NOT NULL UNIQUE,
       PasswordHash NVARCHAR(255) NOT NULL,
       FullName NVARCHAR(200),
-      Email NVARCHAR(150),
-      Role NVARCHAR(20) DEFAULT 'admin',
+      Email NVARCHAR(100),
+      Role NVARCHAR(20) DEFAULT 'admin' CHECK (Role IN ('admin', 'superadmin', 'scanner')),
       IsActive BIT DEFAULT 1,
       CreatedAt DATETIME DEFAULT GETDATE(),
       LastLogin DATETIME
