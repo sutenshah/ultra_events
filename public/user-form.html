@@ -425,19 +425,75 @@
                     successMessage.style.display = 'block';
                     successMessage.textContent = `✅ ${data.message || 'Information saved! Payment link sent to WhatsApp.'}`;
                     
-                    // Show success page
+                    // Show success page with countdown and auto-close
                     setTimeout(() => {
-                        document.body.innerHTML = `
-                            <div style="text-align: center; padding: 50px; font-family: sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
-                                <div style="background: white; border-radius: 20px; padding: 40px; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
-                                    <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
-                                    <h1 style="color: #333; margin-bottom: 20px;">Information Saved!</h1>
-                                    <p style="color: #666; margin-bottom: 10px;">Your payment link has been sent to your WhatsApp.</p>
-                                    <p style="color: #999; font-size: 14px; margin-top: 20px;">You can close this window and return to WhatsApp to complete payment.</p>
+                        let countdown = 3;
+                        const countdownElement = document.createElement('div');
+                        
+                        const updateCountdown = () => {
+                            document.body.innerHTML = `
+                                <div style="text-align: center; padding: 50px; font-family: sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+                                    <div style="background: white; border-radius: 20px; padding: 40px; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                                        <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
+                                        <h1 style="color: #333; margin-bottom: 20px;">Information Saved!</h1>
+                                        <p style="color: #666; margin-bottom: 10px;">Your payment link has been sent to your WhatsApp.</p>
+                                        <p style="color: #999; font-size: 14px; margin-top: 20px;" id="countdown">Closing in ${countdown} seconds...</p>
+                                    </div>
                                 </div>
-                            </div>
-                        `;
-                    }, 2000);
+                            `;
+                            
+                            if (countdown > 0) {
+                                countdown--;
+                                setTimeout(updateCountdown, 1000);
+                            } else {
+                                // Try to close the window using multiple methods
+                                closeWindow();
+                            }
+                        };
+                        
+                        const closeWindow = () => {
+                            // Method 1: Try window.close() (works if opened by window.open())
+                            try {
+                                window.close();
+                                
+                                // Check if window is still open after 100ms
+                                setTimeout(() => {
+                                    if (window && !window.closed) {
+                                        // Method 2: Try redirecting to blank page
+                                        try {
+                                            window.location.replace('about:blank');
+                                        } catch (e) {
+                                            // Method 3: Show manual close message
+                                            showCloseMessage();
+                                        }
+                                    }
+                                }, 100);
+                            } catch (err) {
+                                // Method 2: Try redirecting to blank page
+                                try {
+                                    window.location.replace('about:blank');
+                                } catch (e) {
+                                    // Method 3: Show manual close message
+                                    showCloseMessage();
+                                }
+                            }
+                        };
+                        
+                        const showCloseMessage = () => {
+                            document.body.innerHTML = `
+                                <div style="text-align: center; padding: 50px; font-family: sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+                                    <div style="background: white; border-radius: 20px; padding: 40px; max-width: 400px; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+                                        <div style="font-size: 60px; margin-bottom: 20px;">✅</div>
+                                        <h1 style="color: #333; margin-bottom: 20px;">All Done!</h1>
+                                        <p style="color: #666; margin-bottom: 10px;">Your payment link has been sent to your WhatsApp.</p>
+                                        <p style="color: #999; font-size: 14px; margin-top: 20px;">You can now close this window and return to WhatsApp.</p>
+                                    </div>
+                                </div>
+                            `;
+                        };
+                        
+                        updateCountdown();
+                    }, 500);
                 } else {
                     throw new Error(data.message || 'Failed to save information');
                 }
