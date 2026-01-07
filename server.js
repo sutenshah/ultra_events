@@ -1440,22 +1440,15 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   // Store form URL in state for button click handler
   stateData.formUrl = formUrl;
   
-  // Send button message with "Complete SignUp to Proceed" button
-  // When clicked, we'll send the form link
+  // Send single button message with form URL in body and two buttons
+  // WhatsApp will auto-detect the URL and make it clickable
   await sendButtonMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nClick the button below to open the sign-up form:`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 Tap the link below to open the sign-up form:\n\n${formUrl}`,
     [
-      { id: 'open_signup_form', title: '📝 Complete SignUp to Proceed' },
-      { id: 'back_to_menu', title: '🏠 Back to Menu' },
+      { id: 'open_signup_form', title: '📝 Complete SignUp' },
+      { id: 'back_to_menu', title: '🏠 Back to Home' },
     ]
-  );
-  
-  // Also send the form URL as a text message (WhatsApp will make it clickable)
-  // This ensures users can still access it even if button doesn't work
-  await sendWhatsAppMessage(
-    phoneNumber,
-    `🔗 Form Link:\n${formUrl}\n\n💡 Or type "START" to go back to the main menu.`,
   );
   
   await updateConversationState(phoneNumber, 'awaiting_form_submit', stateData);
@@ -1857,15 +1850,11 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
           if (stateData.formUrl) {
             await sendButtonMessage(
               phoneNumber,
-              '📝 To complete your booking, click the button below to open the sign-up form:',
+              `📝 *Complete Your Booking*\n\n🔗 Tap the link below to open the sign-up form:\n\n${stateData.formUrl}`,
               [
-                { id: 'open_signup_form', title: '📝 Complete SignUp to Proceed' },
-                { id: 'back_to_menu', title: '🏠 Back to Menu' },
+                { id: 'open_signup_form', title: '📝 Complete SignUp' },
+                { id: 'back_to_menu', title: '🏠 Back to Home' },
               ]
-            );
-            await sendWhatsAppMessage(
-              phoneNumber,
-              `🔗 Or use this link:\n${stateData.formUrl}`
             );
           } else {
             await sendWhatsAppMessage(
