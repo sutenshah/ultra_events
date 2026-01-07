@@ -563,15 +563,27 @@ async function sendButtonMessage(phoneNumber, bodyText, buttons) {
   }
 
   // WhatsApp Button Message (max 3 buttons)
-  // Note: WhatsApp only supports "reply" type buttons, not URL buttons
-  // URL buttons are not supported in button messages
-  const buttonArray = buttons.slice(0, 3).map((btn, index) => ({
-    type: 'reply',
-    reply: {
-      id: btn.id || `btn_${index}`,
-      title: btn.title || btn,
-    },
-  }));
+  // Support both "reply" and "url" type buttons
+  // Note: Cannot mix reply and URL buttons in the same message
+  const buttonArray = buttons.slice(0, 3).map((btn, index) => {
+    if (btn.url) {
+      // URL button - opens link directly
+      return {
+        type: 'url',
+        url: btn.url,
+        title: btn.title || btn,
+      };
+    } else {
+      // Reply button - sends message back
+      return {
+        type: 'reply',
+        reply: {
+          id: btn.id || `btn_${index}`,
+          title: btn.title || btn,
+        },
+      };
+    }
+  });
 
   try {
     const response = await axios.post(
@@ -1440,13 +1452,22 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   // Store form URL in state for button click handler
   stateData.formUrl = formUrl;
   
-  // Send single button message with form URL in body and two buttons
-  // WhatsApp will auto-detect the URL and make it clickable
+  // Send button message with URL button that opens form directly
+  // URL button opens the link automatically when clicked
   await sendButtonMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 Tap the link below to open the sign-up form:\n\n${formUrl}`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nTap the button below to open the sign-up form:`,
     [
-      { id: 'open_signup_form', title: '📝 Complete SignUp' },
+      { url: formUrl, title: '📝 Complete SignUp' },
+    ]
+  );
+  
+  // Send separate message with "Back to Home" button (can't mix URL and reply buttons)
+  await new Promise(resolve => setTimeout(resolve, 300));
+  await sendButtonMessage(
+    phoneNumber,
+    '💡 Or go back to the main menu:',
+    [
       { id: 'back_to_menu', title: '🏠 Back to Home' },
     ]
   );
@@ -1831,12 +1852,10 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       case 'awaiting_form_submit':
         // Handle button click or text commands
         if (messageText === 'open_signup_form' || messageText.toLowerCase() === 'complete signup' || messageText.toLowerCase() === 'signup') {
-          // Button clicked - just acknowledge, don't send duplicate URL
+          // Button clicked - do nothing (silent)
           // The URL is already in the previous message and clickable
-          await sendWhatsAppMessage(
-            phoneNumber,
-            '✅ The form link is in the message above. Tap the link to open the sign-up form.\n\n💡 Or type "START" to go back to the main menu.'
-          );
+          // User can tap the URL directly from the message
+          return; // Don't send any response
         } else if (messageText.toLowerCase() === 'start' || messageText.toLowerCase() === 'menu' || messageText === 'back_to_menu') {
           await handleMainMenu(phoneNumber, 'view_events', stateData);
         } else {
