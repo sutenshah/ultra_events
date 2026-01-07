@@ -1831,37 +1831,20 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       case 'awaiting_form_submit':
         // Handle button click or text commands
         if (messageText === 'open_signup_form' || messageText.toLowerCase() === 'complete signup' || messageText.toLowerCase() === 'signup') {
-          // Send the form URL
-          if (stateData.formUrl) {
-            await sendWhatsAppMessage(
-              phoneNumber,
-              `📝 *Complete Your Sign-Up*\n\nTap the link below to open the form:\n\n${stateData.formUrl}\n\nFill in your details and submit to proceed with payment.`
-            );
-          } else {
-            await sendWhatsAppMessage(
-              phoneNumber,
-              '⚠️ Form link not found. Please type "START" to begin again.'
-            );
-          }
+          // Button clicked - just acknowledge, don't send duplicate URL
+          // The URL is already in the previous message and clickable
+          await sendWhatsAppMessage(
+            phoneNumber,
+            '✅ The form link is in the message above. Tap the link to open the sign-up form.\n\n💡 Or type "START" to go back to the main menu.'
+          );
         } else if (messageText.toLowerCase() === 'start' || messageText.toLowerCase() === 'menu' || messageText === 'back_to_menu') {
           await handleMainMenu(phoneNumber, 'view_events', stateData);
         } else {
-          // If user sends any other message, remind them about the form
-          if (stateData.formUrl) {
-            await sendButtonMessage(
-              phoneNumber,
-              `📝 *Complete Your Booking*\n\n🔗 Tap the link below to open the sign-up form:\n\n${stateData.formUrl}`,
-              [
-                { id: 'open_signup_form', title: '📝 Complete SignUp' },
-                { id: 'back_to_menu', title: '🏠 Back to Home' },
-              ]
-            );
-          } else {
-            await sendWhatsAppMessage(
-              phoneNumber,
-              '📝 Please use the form link that was sent earlier to complete your booking.\n\nIf you lost the link, type "START" to begin again.'
-            );
-          }
+          // If user sends any other message, remind them about the form (without duplicate URL)
+          await sendWhatsAppMessage(
+            phoneNumber,
+            '📝 Please use the form link from the previous message to complete your booking.\n\n💡 Or type "START" to go back to the main menu.'
+          );
         }
         break;
       case 'awaiting_full_name':
