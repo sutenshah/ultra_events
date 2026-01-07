@@ -563,27 +563,17 @@ async function sendButtonMessage(phoneNumber, bodyText, buttons) {
   }
 
   // WhatsApp Button Message (max 3 buttons)
-  // Support both "reply" and "url" type buttons
-  // Note: URL buttons may require business verification
-  const buttonArray = buttons.slice(0, 3).map((btn, index) => {
-    if (btn.url) {
-      // URL button - opens link directly (requires business verification)
-      return {
-        type: 'url',
-        url: btn.url,
+  // Note: WhatsApp only supports "reply" type buttons in button messages
+  // URL buttons are NOT supported - URLs must be in message body (auto-detected)
+  const buttonArray = buttons.slice(0, 3)
+    .filter(btn => !btn.url) // Filter out URL buttons (not supported)
+    .map((btn, index) => ({
+      type: 'reply',
+      reply: {
+        id: btn.id || `btn_${index}`,
         title: btn.title || btn,
-      };
-    } else {
-      // Reply button - sends message back
-      return {
-        type: 'reply',
-        reply: {
-          id: btn.id || `btn_${index}`,
-          title: btn.title || btn,
-        },
-      };
-    }
-  });
+      },
+    }));
 
   try {
     const response = await axios.post(
@@ -1452,39 +1442,16 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   // Store form URL in state for button click handler
   stateData.formUrl = formUrl;
   
-  // Try to send with URL button first (opens link directly with custom text)
-  // WhatsApp Business API supports URL buttons but may require business verification
-  // Cannot mix URL and reply buttons in same message, so send separately
-  try {
-    // First message: URL button for "Complete SignUp"
-    await sendButtonMessage(
-      phoneNumber,
-      `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nTap the button below to open the sign-up form:`,
-      [
-        { url: formUrl, title: '📝 Complete SignUp' },
-      ]
-    );
-    
-    // Second message: Reply button for "Back to Home"
-    await new Promise(resolve => setTimeout(resolve, 300));
-    await sendButtonMessage(
-      phoneNumber,
-      '💡 Or go back to the main menu:',
-      [
-        { id: 'back_to_menu', title: '🏠 Back to Home' },
-      ]
-    );
-  } catch (err) {
-    // Fallback: If URL button fails (not supported/not verified), use URL in message body
-    console.log('⚠️ URL button not supported, using URL in message body:', err.message);
-    await sendButtonMessage(
-      phoneNumber,
-      `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 *Complete SignUp:*\n${formUrl}\n\nTap the link above to open the sign-up form.`,
-      [
-        { id: 'back_to_menu', title: '🏠 Back to Home' },
-      ]
-    );
-  }
+  // WhatsApp doesn't support URL buttons in button messages
+  // Solution: Put URL in message body (WhatsApp auto-detects and makes it clickable)
+  // Format it nicely with "Complete SignUp" as a label
+  await sendButtonMessage(
+    phoneNumber,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 *Complete SignUp:*\n${formUrl}\n\nTap the link above to open the sign-up form.`,
+    [
+      { id: 'back_to_menu', title: '🏠 Back to Home' },
+    ]
+  );
   
   await updateConversationState(phoneNumber, 'awaiting_form_submit', stateData);
 }
