@@ -1441,10 +1441,10 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   stateData.formUrl = formUrl;
   
   // Send message with clickable URL in body (WhatsApp auto-detects URLs)
-  // Include a button for "Back to Home"
+  // Format URL with "Complete SignUp" as clear instruction
   await sendButtonMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 Tap the link below to open the sign-up form:\n\n${formUrl}`,
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 *Complete SignUp:*\n${formUrl}\n\nTap the link above to open the sign-up form.`,
     [
       { id: 'back_to_menu', title: '🏠 Back to Home' },
     ]
