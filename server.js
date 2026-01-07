@@ -563,27 +563,15 @@ async function sendButtonMessage(phoneNumber, bodyText, buttons) {
   }
 
   // WhatsApp Button Message (max 3 buttons)
-  // Support both "reply" and "url" type buttons
-  // Note: Cannot mix reply and URL buttons in the same message
-  const buttonArray = buttons.slice(0, 3).map((btn, index) => {
-    if (btn.url) {
-      // URL button - opens link directly
-      return {
-        type: 'url',
-        url: btn.url,
-        title: btn.title || btn,
-      };
-    } else {
-      // Reply button - sends message back
-      return {
-        type: 'reply',
-        reply: {
-          id: btn.id || `btn_${index}`,
-          title: btn.title || btn,
-        },
-      };
-    }
-  });
+  // Note: WhatsApp only supports "reply" type buttons in button messages
+  // URL buttons are not supported - URLs in message body are auto-detected and clickable
+  const buttonArray = buttons.slice(0, 3).map((btn, index) => ({
+    type: 'reply',
+    reply: {
+      id: btn.id || `btn_${index}`,
+      title: btn.title || btn,
+    },
+  }));
 
   try {
     const response = await axios.post(
@@ -1452,21 +1440,11 @@ async function handleTicketSelection(phoneNumber, messageText, stateData) {
   // Store form URL in state for button click handler
   stateData.formUrl = formUrl;
   
-  // Send button message with URL button that opens form directly
-  // URL button opens the link automatically when clicked
+  // Send message with clickable URL in body (WhatsApp auto-detects URLs)
+  // Include a button for "Back to Home"
   await sendButtonMessage(
     phoneNumber,
-    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\nTap the button below to open the sign-up form:`,
-    [
-      { url: formUrl, title: '📝 Complete SignUp' },
-    ]
-  );
-  
-  // Send separate message with "Back to Home" button (can't mix URL and reply buttons)
-  await new Promise(resolve => setTimeout(resolve, 300));
-  await sendButtonMessage(
-    phoneNumber,
-    '💡 Or go back to the main menu:',
+    `✅ Perfect choice!\n\n🎫 *${selectedTicket.TicketName}*\n💰 Amount: ₹${selectedTicket.Price}\n\n📝 *Complete Your Booking*\n\n🔗 Tap the link below to open the sign-up form:\n\n${formUrl}`,
     [
       { id: 'back_to_menu', title: '🏠 Back to Home' },
     ]
