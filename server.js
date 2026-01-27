@@ -3214,7 +3214,9 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           e.EventDate,
           e.EventTime,
           e.Venue,
-          tt.TicketName
+          tt.TicketName,
+          o.ScannedAt,
+          o.ScannedBy
         FROM Orders o
         JOIN Users u ON o.UserID = u.UserID
         JOIN Events e ON o.EventID = e.EventID
@@ -3267,6 +3269,14 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         }
       }
 
+      console.log('📤 Sending already-scanned response:', {
+        orderNumber: order.OrderNumber,
+        scannedBy: order.ScannedBy,
+        scannedAt: order.ScannedAt,
+        scannedAtFormatted: scannedAtFormatted,
+        IsScanned: order.IsScanned
+      });
+      
       return res.json({
         success: true,
         message: 'QR code already scanned. This ticket has been used.',
