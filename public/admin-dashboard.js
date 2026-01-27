@@ -324,7 +324,10 @@ function startScanner() {
             resultDiv.style.display = 'block';
             resultDiv.className = 'scan-result';
             resultDiv.textContent = '📷 Scanning... Point camera at QR code';
+            resultDiv.style.background = '#e0f2fe';
+            resultDiv.style.color = '#1e40af';
 
+            let scanAttempts = 0;
             // QR scanning with jsQR library
             scannerInterval = setInterval(() => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
@@ -340,13 +343,34 @@ function startScanner() {
                             inversionAttempts: 'dontInvert',
                         });
                         
+                        scanAttempts++;
+                        if (scanAttempts % 10 === 0) {
+                            // Update status every 2 seconds
+                            resultDiv.textContent = `📷 Scanning... (${Math.floor(scanAttempts / 5)}s) Point camera at QR code`;
+                        }
+                        
                         if (code) {
-                            console.log('✅ QR Code detected:', code.data);
+                            console.log('✅ QR Code detected!');
+                            console.log('📄 QR Code data:', code.data);
+                            console.log('📄 QR Code data type:', typeof code.data);
+                            console.log('📄 QR Code data length:', code.data.length);
+                            
+                            // Show detection feedback
+                            resultDiv.textContent = '✅ QR Code detected! Processing...';
+                            resultDiv.style.background = '#d1fae5';
+                            resultDiv.style.color = '#065f46';
+                            
                             stopScanner(); // Stop camera first
-                            scanQRCode(code.data);
+                            
+                            // Small delay to show feedback
+                            setTimeout(() => {
+                                scanQRCode(code.data);
+                            }, 300);
                         }
                     } catch (error) {
                         console.error('Error during QR scan:', error);
+                        resultDiv.className = 'scan-result error';
+                        resultDiv.textContent = 'Error scanning: ' + error.message;
                     }
                 }
             }, 200); // Check every 200ms for faster detection
@@ -404,13 +428,15 @@ function scanQRCode(qrData) {
     document.getElementById('bookingDetails').style.display = 'none';
     currentScannedOrder = null;
 
-    console.log('Scanning QR data:', qrData);
+    console.log('📱 Scanning QR data:', qrData);
+    console.log('📱 QR data type:', typeof qrData);
+    console.log('📱 QR data length:', qrData.length);
 
     apiCall('/api/admin/scan', {
         method: 'POST',
         body: JSON.stringify({ qrData: qrData.trim() }),
     }).then(data => {
-        console.log('Scan response:', data);
+        console.log('✅ Scan response received:', data);
         
         if (data && data.success) {
             if (data.scanned) {
@@ -431,8 +457,21 @@ function scanQRCode(qrData) {
             }
         } else {
             resultDiv.className = 'scan-result error';
-            resultDiv.textContent = data?.message || 'Invalid QR code. Please try again.';
-            console.error('Scan failed:', data);
+            const errorMsg = data?.message || 'Invalid QR code. Please try again.';
+            resultDiv.textContent = errorMsg;
+            console.error('❌ Scan failed:', data);
+            console.error('❌ Error details:', JSON.stringify(data, null, 2));
+            
+            // Show more helpful error message
+            if (errorMsg.includes('not found') || errorMsg.includes('Invalid')) {
+                resultDiv.innerHTML = `
+                    <strong>❌ ${errorMsg}</strong><br>
+                    <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                        Make sure you're scanning a valid QR code from Ultraa Events.<br>
+                        If this is a new QR code format, try refreshing the page.
+                    </p>
+                `;
+            }
         }
     }).catch(err => {
         resultDiv.className = 'scan-result error';
@@ -589,6 +628,15 @@ function rejectEntry() {
         
         document.getElementById('bookingDetails').style.display = 'none';
         currentScannedOrder = null;
+    }
+}
+
+// Test QR scan function for debugging
+function testQRScan() {
+    const testData = prompt('Enter test QR data (JSON format with userId and eventId, or orderNumber):');
+    if (testData) {
+        console.log('🧪 Testing QR scan with data:', testData);
+        scanQRCode(testData);
     }
 }
 

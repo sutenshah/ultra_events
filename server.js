@@ -3171,17 +3171,46 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
 
     // Parse QR data - should contain userId and eventId
     let userId, eventId;
+    console.log('📥 Received QR data:', qrData);
+    
     try {
+      // Try to parse as JSON first
       const qrJson = JSON.parse(qrData);
+      console.log('✅ Parsed QR as JSON:', qrJson);
       userId = qrJson.userId;
       eventId = qrJson.eventId;
+      
+      // If JSON doesn't have userId/eventId, try orderNumber
+      if (!userId || !eventId) {
+        if (qrJson.orderNumber) {
+          console.log('📋 Found orderNumber in JSON, looking up order...');
+          const legacyOrder = await pool
+            .request()
+            .input('orderNumber', sql.NVarChar, qrJson.orderNumber)
+            .query('SELECT UserID, EventID FROM Orders WHERE OrderNumber = @orderNumber;');
+          
+          if (legacyOrder.recordset.length) {
+            userId = legacyOrder.recordset[0].UserID;
+            eventId = legacyOrder.recordset[0].EventID;
+            console.log('✅ Found order, userId:', userId, 'eventId:', eventId);
+          }
+        }
+      }
     } catch (e) {
-      // Try legacy format (orderNumber) for backward compatibility
-      let orderNumber = qrData;
+      // Not JSON, try as plain string (orderNumber or URL)
+      console.log('⚠️ QR data is not JSON, trying as string...');
+      let orderNumber = qrData.trim();
+      
+      // Extract order number from URL if present
       if (qrData.includes('OrderNumber=')) {
         const match = qrData.match(/OrderNumber=([^&]+)/);
         if (match) orderNumber = decodeURIComponent(match[1]);
+      } else if (qrData.includes('order=')) {
+        const match = qrData.match(/order=([^&]+)/);
+        if (match) orderNumber = decodeURIComponent(match[1]);
       }
+      
+      console.log('🔍 Looking up order by orderNumber:', orderNumber);
       
       // Find order to get userId and eventId
       const legacyOrder = await pool
@@ -3190,16 +3219,21 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         .query('SELECT UserID, EventID FROM Orders WHERE OrderNumber = @orderNumber;');
       
       if (!legacyOrder.recordset.length) {
-        return res.status(404).json({ success: false, message: 'Ticket not found' });
+        console.error('❌ Order not found for orderNumber:', orderNumber);
+        return res.status(404).json({ success: false, message: 'Ticket not found. Invalid QR code.' });
       }
       
       userId = legacyOrder.recordset[0].UserID;
       eventId = legacyOrder.recordset[0].EventID;
+      console.log('✅ Found order, userId:', userId, 'eventId:', eventId);
     }
 
     if (!userId || !eventId) {
-      return res.status(400).json({ success: false, message: 'Invalid QR code format' });
+      console.error('❌ Missing userId or eventId. userId:', userId, 'eventId:', eventId);
+      return res.status(400).json({ success: false, message: 'Invalid QR code format. QR code must contain user and event information.' });
     }
+    
+    console.log('🔍 Looking up orders for userId:', userId, 'eventId:', eventId);
 
     // Get all completed orders for this user and event
     const ordersResult = await pool
