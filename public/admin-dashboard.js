@@ -451,18 +451,36 @@ function scanQRCode(qrData) {
     console.log('📱 QR data length:', qrData.length);
 
     console.log('📤 Making API call to /api/admin/scan');
+    console.log('📤 QR Data being sent:', qrData.trim());
+    console.log('📤 API_BASE:', API_BASE);
+    
     apiCall('/api/admin/scan', {
         method: 'POST',
         body: JSON.stringify({ qrData: qrData.trim() }),
     }).then(data => {
+        console.log('🎉🎉🎉 THEN BLOCK EXECUTED - RESPONSE RECEIVED 🎉🎉🎉');
         console.log('✅ Scan response received:', data);
         console.log('✅ Response type:', typeof data);
         console.log('✅ Response keys:', data ? Object.keys(data) : 'null');
+        console.log('✅ Full response:', JSON.stringify(data, null, 2));
+        
+        if (!data) {
+            console.error('❌ No data received in response');
+            resultDiv.className = 'scan-result error';
+            resultDiv.textContent = 'Error: No response from server. Please try again.';
+            return;
+        }
         
         if (data && data.success) {
+            console.log('✅✅✅ SUCCESS FLAG IS TRUE - PROCEEDING TO DISPLAY');
             console.log('✅ Success flag is true');
             console.log('✅ Scanned flag:', data.scanned);
             console.log('✅ Order data:', data.order);
+            
+            // TEMPORARY DEBUG: Alert to confirm we're in the right branch
+            if (data.scanned) {
+                alert('DEBUG: Already scanned branch - Order: ' + (data.order?.orderNumber || 'N/A'));
+            }
             
             if (data.scanned) {
                 // Already scanned - show full booking details but mark as scanned
@@ -488,11 +506,37 @@ function scanQRCode(qrData) {
                 
                 // Immediately show booking details
                 console.log('🎯 About to call showBookingDetails with isAlreadyScanned=true');
+                console.log('🎯 Current view:', currentView);
+                console.log('🎯 Checking if bookingDetails element exists...');
+                
+                const bookingDetailsCheck = document.getElementById('bookingDetails');
+                console.log('🎯 bookingDetails element found:', !!bookingDetailsCheck);
+                
                 try {
                     showBookingDetails(data.order, true); // Pass true to indicate already scanned
                     console.log('✅ showBookingDetails called successfully');
+                    
+                    // Double-check modal is visible after a short delay
+                    setTimeout(() => {
+                        const modal = document.getElementById('bookingDetails');
+                        const computedStyle = window.getComputedStyle(modal);
+                        console.log('🔍 Modal check after 200ms:');
+                        console.log('  - display:', computedStyle.display);
+                        console.log('  - visibility:', computedStyle.visibility);
+                        console.log('  - opacity:', computedStyle.opacity);
+                        console.log('  - offsetHeight:', modal.offsetHeight);
+                        console.log('  - offsetWidth:', modal.offsetWidth);
+                        
+                        if (computedStyle.display === 'none' || modal.offsetHeight === 0) {
+                            console.error('❌ Modal is still not visible! Forcing display...');
+                            modal.style.display = 'block';
+                            modal.style.visibility = 'visible';
+                            modal.style.opacity = '1';
+                        }
+                    }, 200);
                 } catch (error) {
                     console.error('❌ Error calling showBookingDetails:', error);
+                    console.error('❌ Error stack:', error.stack);
                     resultDiv.style.display = 'block';
                     resultDiv.className = 'scan-result error';
                     resultDiv.textContent = 'Error displaying booking details: ' + error.message;
