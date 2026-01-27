@@ -396,7 +396,7 @@ function showBookingDetails(order) {
     const bookingInfo = document.getElementById('bookingInfo');
     const totalTickets = order.totalTicketsPurchased || 1;
     const ticketsScanned = order.ticketsScanned || 0;
-    const remainingTickets = totalTickets - ticketsScanned;
+    const remainingTickets = order.remainingScans !== undefined ? order.remainingScans : (totalTickets - ticketsScanned);
     
     bookingInfo.innerHTML = `
         <div class="booking-info-item" style="background: #e0f2fe; border-left: 4px solid #3b82f6;">
@@ -504,19 +504,22 @@ async function confirmEntry() {
         resultDiv.style.display = 'block';
         resultDiv.className = 'scan-result success';
         
-        const newRemaining = remainingTickets - 1;
+        const newScanCount = result.order.scanCount || (ticketsScanned + 1);
+        const newRemaining = result.order.remainingScans !== undefined ? result.order.remainingScans : (remainingTickets - 1);
+        
         resultDiv.innerHTML = `
             <strong>✅ Entry Confirmed!</strong><br>
             <p style="margin-top: 10px;">
                 Order: ${currentScannedOrder.orderNumber}<br>
                 Customer: ${currentScannedOrder.customerName}<br>
                 Entry granted successfully.<br>
-                <strong>${newRemaining} ${newRemaining === 1 ? 'ticket' : 'tickets'} remaining for this order</strong>
+                <strong>${newRemaining} ${newRemaining === 1 ? 'entry' : 'entries'} remaining for this QR code</strong>
             </p>
         `;
         
-        // Update the order object
-        currentScannedOrder.ticketsScanned = ticketsScanned + 1;
+        // Update the order object with new scan data
+        currentScannedOrder.ticketsScanned = newScanCount;
+        currentScannedOrder.remainingScans = newRemaining;
         
         // Update the modal to reflect new count
         showBookingDetails(currentScannedOrder);

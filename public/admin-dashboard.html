@@ -354,6 +354,8 @@
             max-width: 500px;
             margin: 0 auto;
             text-align: center;
+            width: 100%;
+            box-sizing: border-box;
         }
 
         .scanner-icon {
@@ -392,50 +394,67 @@
         /* Booking Details Modal */
         .booking-details {
             background: white;
-            padding: 24px;
+            padding: 20px;
             border-radius: 12px;
             margin-top: 20px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 100%;
+            width: 100%;
+            box-sizing: border-box;
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .booking-details h3 {
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             color: #333;
-            font-size: 20px;
+            font-size: 18px;
+            word-wrap: break-word;
         }
 
         .booking-info {
             display: grid;
-            gap: 16px;
-            margin-bottom: 20px;
+            gap: 12px;
+            margin-bottom: 16px;
         }
 
         .booking-info-item {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
             padding: 12px;
             background: #f9fafb;
             border-radius: 8px;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .booking-info-item label {
             font-weight: 600;
             color: #666;
+            font-size: 13px;
+            margin-bottom: 4px;
         }
 
         .booking-info-item span {
             color: #333;
-            text-align: right;
+            font-size: 14px;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            text-align: left;
         }
 
         .booking-actions {
             display: flex;
-            gap: 12px;
-            margin-top: 20px;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 16px;
         }
 
         .booking-actions button {
-            flex: 1;
+            width: 100%;
+            padding: 12px;
+            font-size: 14px;
         }
 
         /* Badge */
@@ -542,6 +561,100 @@
 
             th, td {
                 padding: 10px 8px;
+            }
+
+            /* Mobile Scanner Styles */
+            .scanner-container {
+                padding: 20px 15px;
+                margin: 0;
+                max-width: 100%;
+            }
+
+            .scanner-icon {
+                font-size: 60px;
+                margin-bottom: 15px;
+            }
+
+            #video {
+                max-width: 100%;
+                margin: 15px 0;
+            }
+
+            .booking-details {
+                padding: 16px;
+                margin-top: 15px;
+                max-height: calc(100vh - 150px);
+                border-radius: 8px;
+            }
+
+            .booking-details h3 {
+                font-size: 16px;
+                margin-bottom: 12px;
+            }
+
+            .booking-info {
+                gap: 10px;
+                margin-bottom: 12px;
+            }
+
+            .booking-info-item {
+                padding: 10px;
+                font-size: 13px;
+            }
+
+            .booking-info-item label {
+                font-size: 12px;
+            }
+
+            .booking-info-item span {
+                font-size: 13px;
+            }
+
+            .booking-actions {
+                gap: 8px;
+                margin-top: 12px;
+            }
+
+            .booking-actions button {
+                padding: 14px;
+                font-size: 14px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .scan-result {
+                padding: 15px;
+                font-size: 13px;
+                margin-top: 15px;
+            }
+        }
+
+        /* Extra small devices */
+        @media (max-width: 480px) {
+            .scanner-container {
+                padding: 15px 10px;
+            }
+
+            .booking-details {
+                padding: 12px;
+                max-height: calc(100vh - 120px);
+            }
+
+            .booking-details h3 {
+                font-size: 15px;
+            }
+
+            .booking-info-item {
+                padding: 8px;
+            }
+
+            .booking-info-item label {
+                font-size: 11px;
+            }
+
+            .booking-info-item span {
+                font-size: 12px;
             }
         }
     </style>
