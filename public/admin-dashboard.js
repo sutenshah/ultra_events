@@ -395,20 +395,19 @@ function scanQRCode(qrData) {
 function showBookingDetails(order) {
     const bookingInfo = document.getElementById('bookingInfo');
     const totalTickets = order.totalTicketsPurchased || 1;
-    const ticketsScanned = order.ticketsScanned || 0;
-    const remainingTickets = order.remainingScans !== undefined ? order.remainingScans : (totalTickets - ticketsScanned);
+    const totalAmount = order.totalAmount || order.amount || 0;
     
     bookingInfo.innerHTML = `
         <div class="booking-info-item" style="background: #e0f2fe; border-left: 4px solid #3b82f6;">
             <label style="font-size: 16px; color: #1e40af;">📊 Ticket Summary:</label>
             <span style="font-size: 16px; font-weight: bold; color: #1e40af;">
-                ${ticketsScanned} / ${totalTickets} scanned
+                ${totalTickets} ${totalTickets === 1 ? 'ticket' : 'tickets'} purchased
             </span>
         </div>
-        <div class="booking-info-item" style="background: ${remainingTickets > 0 ? '#d1fae5' : '#fee2e2'};">
-            <label>Remaining Entries:</label>
-            <span style="font-weight: bold; color: ${remainingTickets > 0 ? '#065f46' : '#991b1b'};">
-                ${remainingTickets} ${remainingTickets === 1 ? 'person' : 'people'} can enter
+        <div class="booking-info-item" style="background: #d1fae5;">
+            <label>Entry Allowed:</label>
+            <span style="font-weight: bold; color: #065f46;">
+                ${totalTickets} ${totalTickets === 1 ? 'person' : 'people'} can enter
             </span>
         </div>
         <div class="booking-info-item">
@@ -444,22 +443,16 @@ function showBookingDetails(order) {
             <span>${order.ticketType || 'N/A'}</span>
         </div>
         <div class="booking-info-item">
-            <label>Amount Paid:</label>
-            <span><strong>${formatCurrency(order.amount || 0)}</strong></span>
+            <label>Total Amount Paid:</label>
+            <span><strong>${formatCurrency(totalAmount)}</strong></span>
         </div>
     `;
     
-    // Disable accept button if all tickets already scanned
+    // Set accept button text
     const confirmBtn = document.getElementById('confirmBtn');
-    if (remainingTickets <= 0) {
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = '⚠️ All Tickets Scanned';
-        confirmBtn.style.opacity = '0.6';
-    } else {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = `✅ Accept Entry (${remainingTickets} remaining)`;
-        confirmBtn.style.opacity = '1';
-    }
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = `✅ Accept Entry for ${totalTickets} ${totalTickets === 1 ? 'Person' : 'People'}`;
+    confirmBtn.style.opacity = '1';
     
     document.getElementById('bookingDetails').style.display = 'block';
     document.getElementById('rejectBtn').disabled = false;
@@ -474,19 +467,12 @@ function closeBookingDetails() {
 
 // Confirm entry
 async function confirmEntry() {
-    if (!currentScannedOrder || !currentScannedOrder.orderId) {
+    if (!currentScannedOrder || (!currentScannedOrder.userId || !currentScannedOrder.eventId)) {
         alert('No order to confirm');
         return;
     }
 
     const totalTickets = currentScannedOrder.totalTicketsPurchased || 1;
-    const ticketsScanned = currentScannedOrder.ticketsScanned || 0;
-    const remainingTickets = totalTickets - ticketsScanned;
-
-    if (remainingTickets <= 0) {
-        alert('All tickets from this order have already been scanned. No more entries allowed.');
-        return;
-    }
 
     const confirmBtn = document.getElementById('confirmBtn');
     const rejectBtn = document.getElementById('rejectBtn');
@@ -496,7 +482,11 @@ async function confirmEntry() {
 
     const result = await apiCall('/api/admin/scan/confirm', {
         method: 'POST',
-        body: JSON.stringify({ orderId: currentScannedOrder.orderId }),
+        body: JSON.stringify({ 
+            userId: currentScannedOrder.userId,
+            eventId: currentScannedOrder.eventId,
+            orderIds: currentScannedOrder.orderIds
+        }),
     });
 
     if (result && result.success) {
@@ -504,39 +494,25 @@ async function confirmEntry() {
         resultDiv.style.display = 'block';
         resultDiv.className = 'scan-result success';
         
-        const newScanCount = result.order.scanCount || (ticketsScanned + 1);
-        const newRemaining = result.order.remainingScans !== undefined ? result.order.remainingScans : (remainingTickets - 1);
-        
         resultDiv.innerHTML = `
             <strong>✅ Entry Confirmed!</strong><br>
             <p style="margin-top: 10px;">
-                Order: ${currentScannedOrder.orderNumber}<br>
                 Customer: ${currentScannedOrder.customerName}<br>
-                Entry granted successfully.<br>
-                <strong>${newRemaining} ${newRemaining === 1 ? 'entry' : 'entries'} remaining for this QR code</strong>
+                Entry granted for <strong>${totalTickets} ${totalTickets === 1 ? 'person' : 'people'}</strong><br>
+                QR code has been used and cannot be scanned again.
             </p>
         `;
         
-        // Update the order object with new scan data
-        currentScannedOrder.ticketsScanned = newScanCount;
-        currentScannedOrder.remainingScans = newRemaining;
-        
-        // Update the modal to reflect new count
-        showBookingDetails(currentScannedOrder);
-        
-        // Auto-close after 3 seconds if all tickets scanned
-        if (newRemaining <= 0) {
-            setTimeout(() => {
-                document.getElementById('bookingDetails').style.display = 'none';
-                currentScannedOrder = null;
-            }, 3000);
-        }
+        // Close the modal after 3 seconds
+        setTimeout(() => {
+            document.getElementById('bookingDetails').style.display = 'none';
+            currentScannedOrder = null;
+        }, 3000);
     } else {
         alert(result?.message || 'Failed to confirm entry');
         confirmBtn.disabled = false;
         rejectBtn.disabled = false;
-        const remaining = totalTickets - ticketsScanned;
-        confirmBtn.textContent = remaining > 0 ? `✅ Accept Entry (${remaining} remaining)` : '⚠️ All Tickets Scanned';
+        confirmBtn.textContent = '✅ Accept Entry';
     }
 }
 
