@@ -467,17 +467,49 @@ function scanQRCode(qrData) {
             if (data.scanned) {
                 // Already scanned - show full booking details but mark as scanned
                 console.log('📋 Showing already-scanned booking details');
+                console.log('📋 Order data received:', data.order);
+                
+                // Ensure we have all required fields
+                if (!data.order || !data.order.orderNumber) {
+                    console.error('❌ Invalid order data in response:', data);
+                    resultDiv.className = 'scan-result error';
+                    resultDiv.textContent = 'Error: Invalid order data received. Please try again.';
+                    return;
+                }
+                
                 currentScannedOrder = data.order;
                 currentScannedOrder.isAlreadyScanned = true; // Flag to disable accept button
-                showBookingDetails(data.order, true); // Pass true to indicate already scanned
+                
+                // Hide the result div and show booking details modal
                 resultDiv.style.display = 'none';
+                
+                // Small delay to ensure DOM is ready
+                setTimeout(() => {
+                    showBookingDetails(data.order, true); // Pass true to indicate already scanned
+                }, 100);
             } else {
                 // Valid ticket - show booking details
                 console.log('📋 Showing valid booking details');
+                console.log('📋 Order data received:', data.order);
+                
+                // Ensure we have all required fields
+                if (!data.order || !data.order.orderNumber) {
+                    console.error('❌ Invalid order data in response:', data);
+                    resultDiv.className = 'scan-result error';
+                    resultDiv.textContent = 'Error: Invalid order data received. Please try again.';
+                    return;
+                }
+                
                 currentScannedOrder = data.order;
                 currentScannedOrder.isAlreadyScanned = false;
-                showBookingDetails(data.order, false);
+                
+                // Hide the result div and show booking details modal
                 resultDiv.style.display = 'none';
+                
+                // Small delay to ensure DOM is ready
+                setTimeout(() => {
+                    showBookingDetails(data.order, false);
+                }, 100);
             }
         } else {
             console.error('❌ Response success is false or missing');
@@ -556,19 +588,24 @@ function showBookingDetails(order, isAlreadyScanned = false) {
     
     bookingInfo.innerHTML = `
         ${isAlreadyScanned ? `
-        <div class="booking-info-item" style="background: #fef3c7; border-left: 4px solid #f59e0b;">
-            <label style="font-size: 16px; color: #92400e;">⚠️ Already Scanned:</label>
-            <span style="font-size: 16px; font-weight: bold; color: #92400e;">
-                This ticket has been used
-            </span>
-        </div>
-        <div class="booking-info-item" style="background: #fef3c7;">
-            <label>Scanned By:</label>
-            <span style="font-weight: bold; color: #92400e;">${order.scannedBy || 'Unknown'}</span>
-        </div>
-        <div class="booking-info-item" style="background: #fef3c7;">
-            <label>Scanned At:</label>
-            <span style="font-weight: bold; color: #92400e;">${scannedAtFormatted}</span>
+        <div class="booking-info-item" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 2px solid #f59e0b; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(245, 158, 11, 0.2);">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                <span style="font-size: 24px;">⚠️</span>
+                <div>
+                    <label style="font-size: 18px; color: #92400e; font-weight: bold; display: block; margin-bottom: 5px;">Ticket Already Used</label>
+                    <span style="font-size: 14px; color: #78350f;">This ticket has been scanned and cannot be used again</span>
+                </div>
+            </div>
+            <div style="border-top: 1px solid #fbbf24; padding-top: 12px; margin-top: 12px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <label style="color: #92400e; font-weight: 600;">Scanned By:</label>
+                    <span style="font-weight: bold; color: #78350f; font-size: 15px;">${order.scannedBy || 'Unknown'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <label style="color: #92400e; font-weight: 600;">Scanned At:</label>
+                    <span style="font-weight: bold; color: #78350f; font-size: 15px;">${scannedAtFormatted}</span>
+                </div>
+            </div>
         </div>
         ` : ''}
         <div class="booking-info-item">
@@ -644,6 +681,9 @@ function showBookingDetails(order, isAlreadyScanned = false) {
     bookingDetails.style.display = 'block';
     console.log('✅ Modal display set to block, current display:', bookingDetails.style.display);
     console.log('✅ Modal computed style:', window.getComputedStyle(bookingDetails).display);
+    
+    // Scroll to top of modal to ensure it's visible
+    bookingDetails.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // Close booking details

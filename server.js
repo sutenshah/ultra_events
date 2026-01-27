@@ -3272,6 +3272,7 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         message: 'QR code already scanned. This ticket has been used.',
         scanned: true,
         order: {
+          orderId: order.OrderID,
           orderNumber: order.OrderNumber,
           customerName: order.CustomerName,
           phoneNumber: order.PhoneNumber,
@@ -3282,6 +3283,8 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           venue: order.Venue,
           ticketType: order.TicketName,
           amount: parseFloat(order.Amount),
+          totalAmount: parseFloat(order.Amount),
+          totalTicketsPurchased: 1, // One order = one ticket
           scannedAt: order.ScannedAt,
           scannedAtFormatted: scannedAtFormatted,
           scannedBy: order.ScannedBy || 'Unknown',
