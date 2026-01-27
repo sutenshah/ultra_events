@@ -440,40 +440,16 @@ function scanQRCode(qrData) {
         
         if (data && data.success) {
             if (data.scanned) {
-                // Already scanned - show detailed information
-                resultDiv.className = 'scan-result error';
-                resultDiv.style.display = 'block';
-                
-                const scannedAt = data.order.scannedAtFormatted || 
-                    (data.order.scannedAt ? new Date(data.order.scannedAt).toLocaleString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: true
-                    }) : 'N/A');
-                
-                resultDiv.innerHTML = `
-                    <strong>⚠️ ${data.message}</strong><br>
-                    <div style="margin-top: 15px; padding: 15px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
-                        <div style="margin-bottom: 10px;">
-                            <strong style="color: #92400e;">📋 Order Details:</strong><br>
-                            <span style="color: #78350f;">Order Number: ${data.order.orderNumber || 'N/A'}</span><br>
-                            <span style="color: #78350f;">Customer: ${data.order.customerName || 'N/A'}</span><br>
-                            <span style="color: #78350f;">Event: ${data.order.eventName || 'N/A'}</span>
-                        </div>
-                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #fbbf24;">
-                            <strong style="color: #92400e;">🔍 Scan Information:</strong><br>
-                            <span style="color: #78350f;">Scanned by: <strong>${data.order.scannedBy || 'Unknown'}</strong></span><br>
-                            <span style="color: #78350f;">Scanned at: <strong>${scannedAt}</strong></span>
-                        </div>
-                    </div>
-                `;
+                // Already scanned - show full booking details but mark as scanned
+                currentScannedOrder = data.order;
+                currentScannedOrder.isAlreadyScanned = true; // Flag to disable accept button
+                showBookingDetails(data.order, true); // Pass true to indicate already scanned
+                resultDiv.style.display = 'none';
             } else {
                 // Valid ticket - show booking details
                 currentScannedOrder = data.order;
-                showBookingDetails(data.order);
+                currentScannedOrder.isAlreadyScanned = false;
+                showBookingDetails(data.order, false);
                 resultDiv.style.display = 'none';
             }
         } else {
@@ -510,11 +486,44 @@ function scanQRCode(qrData) {
 }
 
 // Show booking details modal
-function showBookingDetails(order) {
+function showBookingDetails(order, isAlreadyScanned = false) {
     const bookingInfo = document.getElementById('bookingInfo');
     const totalAmount = order.totalAmount || order.amount || 0;
     
+    // Format scanned date/time if available
+    let scannedAtFormatted = 'N/A';
+    if (order.scannedAt) {
+        try {
+            scannedAtFormatted = new Date(order.scannedAt).toLocaleString('en-IN', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
+        } catch (e) {
+            scannedAtFormatted = order.scannedAtFormatted || String(order.scannedAt);
+        }
+    }
+    
     bookingInfo.innerHTML = `
+        ${isAlreadyScanned ? `
+        <div class="booking-info-item" style="background: #fef3c7; border-left: 4px solid #f59e0b;">
+            <label style="font-size: 16px; color: #92400e;">⚠️ Already Scanned:</label>
+            <span style="font-size: 16px; font-weight: bold; color: #92400e;">
+                This ticket has been used
+            </span>
+        </div>
+        <div class="booking-info-item" style="background: #fef3c7;">
+            <label>Scanned By:</label>
+            <span style="font-weight: bold; color: #92400e;">${order.scannedBy || 'Unknown'}</span>
+        </div>
+        <div class="booking-info-item" style="background: #fef3c7;">
+            <label>Scanned At:</label>
+            <span style="font-weight: bold; color: #92400e;">${scannedAtFormatted}</span>
+        </div>
+        ` : ''}
         <div class="booking-info-item">
             <label>Order Number:</label>
             <span><strong>${order.orderNumber || 'N/A'}</strong></span>
@@ -557,15 +566,34 @@ function showBookingDetails(order) {
     console.log('📋 Booking details shown for order:', order);
     console.log('📋 Order has orderId:', order.orderId);
     console.log('📋 Order has orderNumber:', order.orderNumber);
+    console.log('📋 Is already scanned:', isAlreadyScanned);
     
-    // Set accept button text
+    // Set accept button based on scan status
     const confirmBtn = document.getElementById('confirmBtn');
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = '✅ Accept Entry';
-    confirmBtn.style.opacity = '1';
+    const rejectBtn = document.getElementById('rejectBtn');
+    
+    if (isAlreadyScanned) {
+        // Disable accept button if already scanned
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '⚠️ Already Scanned';
+        confirmBtn.style.opacity = '0.6';
+        confirmBtn.style.cursor = 'not-allowed';
+    } else {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '✅ Accept Entry';
+        confirmBtn.style.opacity = '1';
+        confirmBtn.style.cursor = 'pointer';
+    }
+    
+    // Hide reject button if already scanned (no point rejecting)
+    if (isAlreadyScanned) {
+        rejectBtn.style.display = 'none';
+    } else {
+        rejectBtn.style.display = 'inline-block';
+        rejectBtn.disabled = false;
+    }
     
     document.getElementById('bookingDetails').style.display = 'block';
-    document.getElementById('rejectBtn').disabled = false;
 }
 
 // Close booking details
