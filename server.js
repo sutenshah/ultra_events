@@ -2363,10 +2363,10 @@ app.post('/api/orders/verify', async (req, res, next) => {
       return res.json({ success: true, message: 'Payment already verified', order });
     }
     
-    // Generate QR code based on UserID + EventID (one QR for all user's tickets for this event)
+    // Generate QR code based on OrderNumber (one QR per order)
     const qrData = JSON.stringify({
-      userId: order.UserID,
-      eventId: order.EventID,
+      orderNumber: order.OrderNumber,
+      orderId: order.OrderID,
       timestamp: new Date().toISOString(),
     });
     const qrCode = await generateQRCode(qrData);
@@ -3169,37 +3169,19 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'QR data is required' });
     }
 
-    // Parse QR data - should contain userId and eventId
-    let userId, eventId;
+    // Parse QR data - should contain orderNumber
+    let orderNumber;
     console.log('📥 Received QR data:', qrData);
     
     try {
       // Try to parse as JSON first
       const qrJson = JSON.parse(qrData);
       console.log('✅ Parsed QR as JSON:', qrJson);
-      userId = qrJson.userId;
-      eventId = qrJson.eventId;
-      
-      // If JSON doesn't have userId/eventId, try orderNumber
-      if (!userId || !eventId) {
-        if (qrJson.orderNumber) {
-          console.log('📋 Found orderNumber in JSON, looking up order...');
-          const legacyOrder = await pool
-            .request()
-            .input('orderNumber', sql.NVarChar, qrJson.orderNumber)
-            .query('SELECT UserID, EventID FROM Orders WHERE OrderNumber = @orderNumber;');
-          
-          if (legacyOrder.recordset.length) {
-            userId = legacyOrder.recordset[0].UserID;
-            eventId = legacyOrder.recordset[0].EventID;
-            console.log('✅ Found order, userId:', userId, 'eventId:', eventId);
-          }
-        }
-      }
+      orderNumber = qrJson.orderNumber;
     } catch (e) {
       // Not JSON, try as plain string (orderNumber or URL)
       console.log('⚠️ QR data is not JSON, trying as string...');
-      let orderNumber = qrData.trim();
+      orderNumber = qrData.trim();
       
       // Extract order number from URL if present
       if (qrData.includes('OrderNumber=')) {
@@ -3209,37 +3191,19 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         const match = qrData.match(/order=([^&]+)/);
         if (match) orderNumber = decodeURIComponent(match[1]);
       }
-      
-      console.log('🔍 Looking up order by orderNumber:', orderNumber);
-      
-      // Find order to get userId and eventId
-      const legacyOrder = await pool
-        .request()
-        .input('orderNumber', sql.NVarChar, orderNumber)
-        .query('SELECT UserID, EventID FROM Orders WHERE OrderNumber = @orderNumber;');
-      
-      if (!legacyOrder.recordset.length) {
-        console.error('❌ Order not found for orderNumber:', orderNumber);
-        return res.status(404).json({ success: false, message: 'Ticket not found. Invalid QR code.' });
-      }
-      
-      userId = legacyOrder.recordset[0].UserID;
-      eventId = legacyOrder.recordset[0].EventID;
-      console.log('✅ Found order, userId:', userId, 'eventId:', eventId);
     }
 
-    if (!userId || !eventId) {
-      console.error('❌ Missing userId or eventId. userId:', userId, 'eventId:', eventId);
-      return res.status(400).json({ success: false, message: 'Invalid QR code format. QR code must contain user and event information.' });
+    if (!orderNumber) {
+      console.error('❌ No orderNumber found in QR data');
+      return res.status(400).json({ success: false, message: 'Invalid QR code format. QR code must contain order number.' });
     }
     
-    console.log('🔍 Looking up orders for userId:', userId, 'eventId:', eventId);
+    console.log('🔍 Looking up order by orderNumber:', orderNumber);
 
-    // Get all completed orders for this user and event
-    const ordersResult = await pool
+    // Find the specific order by order number
+    const orderResult = await pool
       .request()
-      .input('userId', sql.Int, userId)
-      .input('eventId', sql.Int, eventId)
+      .input('orderNumber', sql.NVarChar, orderNumber)
       .query(`
         SELECT 
           o.*,
@@ -3250,55 +3214,53 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           e.EventDate,
           e.EventTime,
           e.Venue,
-          tt.TicketName,
-          COUNT(*) OVER() as TotalTicketsPurchased
+          tt.TicketName
         FROM Orders o
         JOIN Users u ON o.UserID = u.UserID
         JOIN Events e ON o.EventID = e.EventID
         JOIN TicketTypes tt ON o.TicketTypeID = tt.TicketTypeID
-        WHERE o.UserID = @userId 
-        AND o.EventID = @eventId 
-        AND o.Status = 'completed'
-        ORDER BY o.CreatedAt ASC;
+        WHERE o.OrderNumber = @orderNumber;
       `);
 
-    if (!ordersResult.recordset.length) {
-      return res.status(404).json({ success: false, message: 'No tickets found for this QR code' });
+    if (!orderResult.recordset.length) {
+      console.error('❌ Order not found for orderNumber:', orderNumber);
+      return res.status(404).json({ success: false, message: 'Ticket not found. Invalid QR code.' });
     }
 
-    const orders = ordersResult.recordset;
-    const firstOrder = orders[0];
-    const totalTickets = orders.length;
+    const order = orderResult.recordset[0];
 
-    // Check if ANY order has been scanned (one scan per user+event)
-    const scannedOrders = orders.filter(o => o.IsScanned === true || o.IsScanned === 1);
-    
-    if (scannedOrders.length > 0) {
+    // Check if order is completed
+    if (order.Status !== 'completed') {
+      return res.status(400).json({
+        success: false,
+        message: 'Ticket payment not completed',
+        order: {
+          orderNumber: order.OrderNumber,
+          status: order.Status,
+        },
+      });
+    }
+
+    // Check if this specific order has been scanned
+    if (order.IsScanned === true || order.IsScanned === 1) {
       return res.json({
         success: true,
         message: 'QR code already scanned. This ticket has been used.',
         scanned: true,
         order: {
-          customerName: firstOrder.CustomerName,
-          phoneNumber: firstOrder.PhoneNumber,
-          email: firstOrder.Email,
-          eventName: firstOrder.EventName,
-          eventDate: firstOrder.EventDate,
-          eventTime: firstOrder.EventTime,
-          venue: firstOrder.Venue,
-          totalTicketsPurchased: totalTickets,
-          scannedAt: scannedOrders[0].ScannedAt,
-          scannedBy: scannedOrders[0].ScannedBy,
+          orderNumber: order.OrderNumber,
+          customerName: order.CustomerName,
+          phoneNumber: order.PhoneNumber,
+          email: order.Email,
+          eventName: order.EventName,
+          eventDate: order.EventDate,
+          eventTime: order.EventTime,
+          venue: order.Venue,
+          scannedAt: order.ScannedAt,
+          scannedBy: order.ScannedBy,
         },
       });
     }
-
-    // Calculate total amount
-    const totalAmount = orders.reduce((sum, o) => sum + parseFloat(o.Amount || 0), 0);
-    
-    // Get all order numbers (show first one, or all if multiple)
-    const orderNumbers = orders.map(o => o.OrderNumber);
-    const orderNumber = orderNumbers.length === 1 ? orderNumbers[0] : orderNumbers.join(', ');
 
     // Return order details without marking as scanned (scanner will confirm)
     res.json({
@@ -3306,20 +3268,19 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
       message: 'Ticket validated successfully',
       scanned: false,
       order: {
-        userId: userId,
-        eventId: eventId,
-        orderNumber: orderNumber,
-        orderNumbers: orderNumbers,
-        orderIds: orders.map(o => o.OrderID),
-        customerName: firstOrder.CustomerName,
-        phoneNumber: firstOrder.PhoneNumber,
-        email: firstOrder.Email,
-        eventName: firstOrder.EventName,
-        eventDate: firstOrder.EventDate,
-        eventTime: firstOrder.EventTime,
-        venue: firstOrder.Venue,
-        totalTicketsPurchased: totalTickets,
-        totalAmount: totalAmount,
+        orderId: order.OrderID,
+        orderNumber: order.OrderNumber,
+        customerName: order.CustomerName,
+        phoneNumber: order.PhoneNumber,
+        email: order.Email,
+        eventName: order.EventName,
+        eventDate: order.EventDate,
+        eventTime: order.EventTime,
+        venue: order.Venue,
+        ticketType: order.TicketName,
+        amount: parseFloat(order.Amount),
+        totalTicketsPurchased: 1, // One order = one ticket
+        totalAmount: parseFloat(order.Amount),
       },
     });
   } catch (err) {
@@ -3327,38 +3288,37 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
   }
 });
 
-// Confirm scan - mark ALL user's tickets for this event as scanned (one-time scan)
+// Confirm scan - mark THIS specific order as scanned (one-time scan per order)
 app.post('/api/admin/scan/confirm', authenticateAdmin, async (req, res, next) => {
   try {
-    const { userId, eventId, orderIds } = req.body;
+    const { orderId } = req.body;
 
-    if (!userId || !eventId) {
-      return res.status(400).json({ success: false, message: 'User ID and Event ID are required' });
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'Order ID is required' });
     }
 
-    // Get all completed orders for this user and event
-    const ordersResult = await pool
+    // Get the specific order
+    const orderResult = await pool
       .request()
-      .input('userId', sql.Int, userId)
-      .input('eventId', sql.Int, eventId)
+      .input('orderId', sql.Int, orderId)
       .query(`
         SELECT OrderID, OrderNumber, Status, IsScanned
         FROM Orders
-        WHERE UserID = @userId 
-        AND EventID = @eventId 
-        AND Status = 'completed';
+        WHERE OrderID = @orderId;
       `);
 
-    if (!ordersResult.recordset.length) {
-      return res.status(404).json({ success: false, message: 'No tickets found' });
+    if (!orderResult.recordset.length) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    const orders = ordersResult.recordset;
-    const totalTickets = orders.length;
+    const order = orderResult.recordset[0];
+
+    if (order.Status !== 'completed') {
+      return res.status(400).json({ success: false, message: 'Payment not completed' });
+    }
 
     // Check if already scanned
-    const scannedOrders = orders.filter(o => o.IsScanned === true || o.IsScanned === 1);
-    if (scannedOrders.length > 0) {
+    if (order.IsScanned === true || order.IsScanned === 1) {
       return res.status(400).json({ 
         success: false, 
         message: 'QR code already scanned. This ticket has been used.' 
@@ -3366,29 +3326,26 @@ app.post('/api/admin/scan/confirm', authenticateAdmin, async (req, res, next) =>
     }
 
     const scannedBy = req.admin.Username || req.admin.FullName || 'Scanner';
-    const scannedAt = new Date();
 
-    // Mark ALL orders as scanned
-    for (const order of orders) {
-      await pool
-        .request()
-        .input('orderId', sql.Int, order.OrderID)
-        .input('scannedBy', sql.NVarChar, scannedBy)
-        .query(`
-          UPDATE Orders 
-          SET IsScanned = 1, 
-              ScannedAt = GETDATE(), 
-              ScannedBy = @scannedBy
-          WHERE OrderID = @orderId;
-        `);
-    }
+    // Mark THIS order as scanned
+    await pool
+      .request()
+      .input('orderId', sql.Int, orderId)
+      .input('scannedBy', sql.NVarChar, scannedBy)
+      .query(`
+        UPDATE Orders 
+        SET IsScanned = 1, 
+            ScannedAt = GETDATE(), 
+            ScannedBy = @scannedBy
+        WHERE OrderID = @orderId;
+      `);
 
     res.json({
       success: true,
-      message: `Entry confirmed for ${totalTickets} ${totalTickets === 1 ? 'ticket' : 'tickets'}`,
+      message: 'Entry confirmed successfully',
       order: {
-        totalTickets: totalTickets,
-        scannedAt: scannedAt,
+        orderNumber: order.OrderNumber,
+        scannedAt: new Date(),
         scannedBy: scannedBy,
       },
     });
@@ -3987,10 +3944,10 @@ async function processPaymentSuccess(orderId, paymentId) {
     // Clean up tracking since payment is being processed
     paymentCheckAttempts.delete(orderId);
     
-    // Generate QR code based on UserID + EventID (one QR for all user's tickets for this event)
+    // Generate QR code based on OrderNumber (one QR per order)
     const qrData = JSON.stringify({
-      userId: order.UserID,
-      eventId: order.EventID,
+      orderNumber: order.OrderNumber,
+      orderId: order.OrderID,
       timestamp: new Date().toISOString(),
     });
     const qrCode = await generateQRCode(qrData);

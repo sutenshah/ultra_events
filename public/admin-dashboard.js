@@ -491,25 +491,12 @@ function scanQRCode(qrData) {
 // Show booking details modal
 function showBookingDetails(order) {
     const bookingInfo = document.getElementById('bookingInfo');
-    const totalTickets = order.totalTicketsPurchased || 1;
     const totalAmount = order.totalAmount || order.amount || 0;
     
     bookingInfo.innerHTML = `
-        <div class="booking-info-item" style="background: #e0f2fe; border-left: 4px solid #3b82f6;">
-            <label style="font-size: 16px; color: #1e40af;">📊 Ticket Summary:</label>
-            <span style="font-size: 16px; font-weight: bold; color: #1e40af;">
-                ${totalTickets} ${totalTickets === 1 ? 'ticket' : 'tickets'} purchased
-            </span>
-        </div>
-        <div class="booking-info-item" style="background: #d1fae5;">
-            <label>Entry Allowed:</label>
-            <span style="font-weight: bold; color: #065f46;">
-                ${totalTickets} ${totalTickets === 1 ? 'person' : 'people'} can enter
-            </span>
-        </div>
         <div class="booking-info-item">
-            <label>Order Number${(order.orderNumbers && order.orderNumbers.length > 1) ? 's' : ''}:</label>
-            <span><strong>${order.orderNumber || (order.orderNumbers ? order.orderNumbers.join(', ') : 'N/A')}</strong></span>
+            <label>Order Number:</label>
+            <span><strong>${order.orderNumber || 'N/A'}</strong></span>
         </div>
         <div class="booking-info-item">
             <label>Customer Name:</label>
@@ -547,14 +534,13 @@ function showBookingDetails(order) {
     
     // Store order data for confirmation (ensure all required fields are present)
     console.log('📋 Booking details shown for order:', order);
-    console.log('📋 Order has userId:', order.userId, 'eventId:', order.eventId);
-    console.log('📋 Order has orderIds:', order.orderIds);
+    console.log('📋 Order has orderId:', order.orderId);
     console.log('📋 Order has orderNumber:', order.orderNumber);
     
     // Set accept button text
     const confirmBtn = document.getElementById('confirmBtn');
     confirmBtn.disabled = false;
-    confirmBtn.textContent = `✅ Accept Entry for ${totalTickets} ${totalTickets === 1 ? 'Person' : 'People'}`;
+    confirmBtn.textContent = '✅ Accept Entry';
     confirmBtn.style.opacity = '1';
     
     document.getElementById('bookingDetails').style.display = 'block';
@@ -579,16 +565,12 @@ async function confirmEntry() {
         return;
     }
     
-    if (!currentScannedOrder.userId || !currentScannedOrder.eventId) {
-        console.error('❌ Missing userId or eventId');
-        console.error('❌ userId:', currentScannedOrder.userId);
-        console.error('❌ eventId:', currentScannedOrder.eventId);
+    if (!currentScannedOrder.orderId) {
+        console.error('❌ Missing orderId');
         console.error('❌ Full order object:', JSON.stringify(currentScannedOrder, null, 2));
         alert('Invalid order data. Please scan the QR code again.');
         return;
     }
-
-    const totalTickets = currentScannedOrder.totalTicketsPurchased || 1;
 
     const confirmBtn = document.getElementById('confirmBtn');
     const rejectBtn = document.getElementById('rejectBtn');
@@ -599,9 +581,7 @@ async function confirmEntry() {
     const result = await apiCall('/api/admin/scan/confirm', {
         method: 'POST',
         body: JSON.stringify({ 
-            userId: currentScannedOrder.userId,
-            eventId: currentScannedOrder.eventId,
-            orderIds: currentScannedOrder.orderIds
+            orderId: currentScannedOrder.orderId
         }),
     });
 
@@ -613,8 +593,9 @@ async function confirmEntry() {
         resultDiv.innerHTML = `
             <strong>✅ Entry Confirmed!</strong><br>
             <p style="margin-top: 10px;">
+                Order: ${currentScannedOrder.orderNumber}<br>
                 Customer: ${currentScannedOrder.customerName}<br>
-                Entry granted for <strong>${totalTickets} ${totalTickets === 1 ? 'person' : 'people'}</strong><br>
+                Entry granted successfully.<br>
                 QR code has been used and cannot be scanned again.
             </p>
         `;
