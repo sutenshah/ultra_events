@@ -3181,10 +3181,21 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
       if (match) orderNumber = decodeURIComponent(match[1]);
     }
 
+    // Try to parse QR data if it's JSON
+    let parsedOrderNumber = orderNumber;
+    try {
+      const qrJson = JSON.parse(qrData);
+      if (qrJson.orderNumber) {
+        parsedOrderNumber = qrJson.orderNumber;
+      }
+    } catch (e) {
+      // Not JSON, use as is
+    }
+
     // Find order by order number
     const orderResult = await pool
       .request()
-      .input('orderNumber', sql.NVarChar, orderNumber)
+      .input('orderNumber', sql.NVarChar, parsedOrderNumber)
       .query(`
         SELECT 
           o.*,
@@ -3195,7 +3206,20 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           e.EventDate,
           e.EventTime,
           e.Venue,
-          tt.TicketName
+          tt.TicketName,
+          -- Count total tickets purchased by this customer for this event
+          (SELECT COUNT(*) 
+           FROM Orders o2 
+           WHERE o2.UserID = o.UserID 
+           AND o2.EventID = o.EventID 
+           AND o2.Status = 'completed') as TotalTicketsPurchased,
+          -- Count how many tickets from this customer have been scanned
+          (SELECT COUNT(*) 
+           FROM Orders o3 
+           WHERE o3.UserID = o.UserID 
+           AND o3.EventID = o.EventID 
+           AND o3.Status = 'completed' 
+           AND o3.IsScanned = 1) as TicketsScanned
         FROM Orders o
         JOIN Users u ON o.UserID = u.UserID
         JOIN Events e ON o.EventID = e.EventID
@@ -3240,6 +3264,8 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           amount: parseFloat(order.Amount),
           scannedAt: order.ScannedAt,
           scannedBy: order.ScannedBy,
+          totalTicketsPurchased: parseInt(order.TotalTicketsPurchased || 1),
+          ticketsScanned: parseInt(order.TicketsScanned || 0),
         },
       });
     }
@@ -3261,6 +3287,8 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         venue: order.Venue,
         ticketType: order.TicketName,
         amount: parseFloat(order.Amount),
+        totalTicketsPurchased: parseInt(order.TotalTicketsPurchased || 1),
+        ticketsScanned: parseInt(order.TicketsScanned || 0),
       },
     });
   } catch (err) {

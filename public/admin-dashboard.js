@@ -300,7 +300,7 @@ function startScanner() {
             document.getElementById('startScannerBtn').style.display = 'none';
             document.getElementById('stopScannerBtn').style.display = 'inline-block';
 
-            // QR scanning with jsQR library (if available) or manual input
+            // QR scanning with jsQR library
             scannerInterval = setInterval(() => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
                     canvas.width = video.videoWidth;
@@ -309,16 +309,19 @@ function startScanner() {
                     
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                     
-                    // Try jsQR if available
+                    // Use jsQR to scan QR code
                     if (typeof jsQR !== 'undefined') {
                         const code = jsQR(imageData.data, imageData.width, imageData.height);
                         if (code) {
+                            console.log('QR Code detected:', code.data);
                             scanQRCode(code.data);
                             stopScanner(); // Stop after successful scan
                         }
+                    } else {
+                        console.warn('jsQR library not loaded. Please refresh the page.');
                     }
                 }
-            }, 300);
+            }, 200); // Check every 200ms for faster detection
         })
         .catch(err => {
             console.error('Camera error:', err);
@@ -391,7 +394,23 @@ function scanQRCode(qrData) {
 // Show booking details modal
 function showBookingDetails(order) {
     const bookingInfo = document.getElementById('bookingInfo');
+    const totalTickets = order.totalTicketsPurchased || 1;
+    const ticketsScanned = order.ticketsScanned || 0;
+    const remainingTickets = totalTickets - ticketsScanned;
+    
     bookingInfo.innerHTML = `
+        <div class="booking-info-item" style="background: #e0f2fe; border-left: 4px solid #3b82f6;">
+            <label style="font-size: 16px; color: #1e40af;">📊 Ticket Summary:</label>
+            <span style="font-size: 16px; font-weight: bold; color: #1e40af;">
+                ${ticketsScanned} / ${totalTickets} scanned
+            </span>
+        </div>
+        <div class="booking-info-item" style="background: ${remainingTickets > 0 ? '#d1fae5' : '#fee2e2'};">
+            <label>Remaining Entries:</label>
+            <span style="font-weight: bold; color: ${remainingTickets > 0 ? '#065f46' : '#991b1b'};">
+                ${remainingTickets} ${remainingTickets === 1 ? 'person' : 'people'} can enter
+            </span>
+        </div>
         <div class="booking-info-item">
             <label>Order Number:</label>
             <span><strong>${order.orderNumber}</strong></span>
@@ -430,8 +449,19 @@ function showBookingDetails(order) {
         </div>
     `;
     
+    // Disable accept button if all tickets already scanned
+    const confirmBtn = document.getElementById('confirmBtn');
+    if (remainingTickets <= 0) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '⚠️ All Tickets Scanned';
+        confirmBtn.style.opacity = '0.6';
+    } else {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `✅ Accept Entry (${remainingTickets} remaining)`;
+        confirmBtn.style.opacity = '1';
+    }
+    
     document.getElementById('bookingDetails').style.display = 'block';
-    document.getElementById('confirmBtn').disabled = false;
     document.getElementById('rejectBtn').disabled = false;
 }
 
@@ -446,6 +476,15 @@ function closeBookingDetails() {
 async function confirmEntry() {
     if (!currentScannedOrder || !currentScannedOrder.orderId) {
         alert('No order to confirm');
+        return;
+    }
+
+    const totalTickets = currentScannedOrder.totalTicketsPurchased || 1;
+    const ticketsScanned = currentScannedOrder.ticketsScanned || 0;
+    const remainingTickets = totalTickets - ticketsScanned;
+
+    if (remainingTickets <= 0) {
+        alert('All tickets from this order have already been scanned. No more entries allowed.');
         return;
     }
 
@@ -464,27 +503,37 @@ async function confirmEntry() {
         const resultDiv = document.getElementById('scanResult');
         resultDiv.style.display = 'block';
         resultDiv.className = 'scan-result success';
+        
+        const newRemaining = remainingTickets - 1;
         resultDiv.innerHTML = `
             <strong>✅ Entry Confirmed!</strong><br>
             <p style="margin-top: 10px;">
                 Order: ${currentScannedOrder.orderNumber}<br>
                 Customer: ${currentScannedOrder.customerName}<br>
-                Entry granted successfully.
+                Entry granted successfully.<br>
+                <strong>${newRemaining} ${newRemaining === 1 ? 'ticket' : 'tickets'} remaining for this order</strong>
             </p>
         `;
         
-        document.getElementById('bookingDetails').style.display = 'none';
-        currentScannedOrder = null;
+        // Update the order object
+        currentScannedOrder.ticketsScanned = ticketsScanned + 1;
         
-        // Reset buttons
-        confirmBtn.disabled = false;
-        rejectBtn.disabled = false;
-        confirmBtn.textContent = '✅ Accept Entry';
+        // Update the modal to reflect new count
+        showBookingDetails(currentScannedOrder);
+        
+        // Auto-close after 3 seconds if all tickets scanned
+        if (newRemaining <= 0) {
+            setTimeout(() => {
+                document.getElementById('bookingDetails').style.display = 'none';
+                currentScannedOrder = null;
+            }, 3000);
+        }
     } else {
         alert(result?.message || 'Failed to confirm entry');
         confirmBtn.disabled = false;
         rejectBtn.disabled = false;
-        confirmBtn.textContent = '✅ Accept Entry';
+        const remaining = totalTickets - ticketsScanned;
+        confirmBtn.textContent = remaining > 0 ? `✅ Accept Entry (${remaining} remaining)` : '⚠️ All Tickets Scanned';
     }
 }
 
