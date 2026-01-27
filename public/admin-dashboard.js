@@ -24,21 +24,39 @@ async function apiCall(endpoint, options = {}) {
         },
     };
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-        ...defaultOptions,
-        ...options,
-        headers: {
-            ...defaultOptions.headers,
-            ...(options.headers || {}),
-        },
-    });
+    try {
+        console.log(`📤 API Call: ${API_BASE}${endpoint}`);
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            ...defaultOptions,
+            ...options,
+            headers: {
+                ...defaultOptions.headers,
+                ...(options.headers || {}),
+            },
+        });
 
-    if (response.status === 401) {
-        logout();
-        return null;
+        console.log(`📥 Response status: ${response.status} ${response.statusText}`);
+
+        if (response.status === 401) {
+            console.error('❌ Unauthorized - logging out');
+            logout();
+            return null;
+        }
+
+        if (!response.ok) {
+            console.error(`❌ Response not OK: ${response.status} ${response.statusText}`);
+            const errorText = await response.text();
+            console.error('❌ Error response body:', errorText);
+            throw new Error(`API call failed: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log(`✅ API response received for ${endpoint}:`, data);
+        return data;
+    } catch (error) {
+        console.error(`❌ API call error for ${endpoint}:`, error);
+        throw error;
     }
-
-    return await response.json();
 }
 
 // Format currency
@@ -432,27 +450,37 @@ function scanQRCode(qrData) {
     console.log('📱 QR data type:', typeof qrData);
     console.log('📱 QR data length:', qrData.length);
 
+    console.log('📤 Making API call to /api/admin/scan');
     apiCall('/api/admin/scan', {
         method: 'POST',
         body: JSON.stringify({ qrData: qrData.trim() }),
     }).then(data => {
         console.log('✅ Scan response received:', data);
+        console.log('✅ Response type:', typeof data);
+        console.log('✅ Response keys:', data ? Object.keys(data) : 'null');
         
         if (data && data.success) {
+            console.log('✅ Success flag is true');
+            console.log('✅ Scanned flag:', data.scanned);
+            console.log('✅ Order data:', data.order);
+            
             if (data.scanned) {
                 // Already scanned - show full booking details but mark as scanned
+                console.log('📋 Showing already-scanned booking details');
                 currentScannedOrder = data.order;
                 currentScannedOrder.isAlreadyScanned = true; // Flag to disable accept button
                 showBookingDetails(data.order, true); // Pass true to indicate already scanned
                 resultDiv.style.display = 'none';
             } else {
                 // Valid ticket - show booking details
+                console.log('📋 Showing valid booking details');
                 currentScannedOrder = data.order;
                 currentScannedOrder.isAlreadyScanned = false;
                 showBookingDetails(data.order, false);
                 resultDiv.style.display = 'none';
             }
         } else {
+            console.error('❌ Response success is false or missing');
             resultDiv.className = 'scan-result error';
             const errorMsg = data?.message || 'Invalid QR code. Please try again.';
             resultDiv.textContent = errorMsg;
@@ -471,6 +499,7 @@ function scanQRCode(qrData) {
             }
         }
     }).catch(err => {
+        console.error('❌ API call error:', err);
         resultDiv.className = 'scan-result error';
         resultDiv.textContent = 'Error scanning ticket. Please check your connection and try again.';
         console.error('Scan error:', err);
@@ -487,7 +516,25 @@ function scanQRCode(qrData) {
 
 // Show booking details modal
 function showBookingDetails(order, isAlreadyScanned = false) {
+    console.log('🎯 showBookingDetails called with:', { order, isAlreadyScanned });
+    
     const bookingInfo = document.getElementById('bookingInfo');
+    const bookingDetails = document.getElementById('bookingDetails');
+    
+    if (!bookingInfo) {
+        console.error('❌ bookingInfo element not found!');
+        alert('Error: Booking info element not found. Please refresh the page.');
+        return;
+    }
+    
+    if (!bookingDetails) {
+        console.error('❌ bookingDetails element not found!');
+        alert('Error: Booking details modal not found. Please refresh the page.');
+        return;
+    }
+    
+    console.log('✅ Found bookingInfo and bookingDetails elements');
+    
     const totalAmount = order.totalAmount || order.amount || 0;
     
     // Format scanned date/time if available
@@ -593,7 +640,10 @@ function showBookingDetails(order, isAlreadyScanned = false) {
         rejectBtn.disabled = false;
     }
     
-    document.getElementById('bookingDetails').style.display = 'block';
+    console.log('🎯 Displaying booking details modal');
+    bookingDetails.style.display = 'block';
+    console.log('✅ Modal display set to block, current display:', bookingDetails.style.display);
+    console.log('✅ Modal computed style:', window.getComputedStyle(bookingDetails).display);
 }
 
 // Close booking details

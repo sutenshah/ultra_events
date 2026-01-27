@@ -3228,6 +3228,12 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
     }
 
     const order = orderResult.recordset[0];
+    console.log('✅ Order found:', {
+      OrderID: order.OrderID,
+      OrderNumber: order.OrderNumber,
+      Status: order.Status,
+      IsScanned: order.IsScanned
+    });
 
     // Check if order is completed
     if (order.Status !== 'completed') {
@@ -3284,7 +3290,7 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
     }
 
     // Return order details without marking as scanned (scanner will confirm)
-    res.json({
+    const responseData = {
       success: true,
       message: 'Ticket validated successfully',
       scanned: false,
@@ -3303,7 +3309,10 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         totalTicketsPurchased: 1, // One order = one ticket
         totalAmount: parseFloat(order.Amount),
       },
-    });
+    };
+    
+    console.log('📤 Sending scan response:', JSON.stringify(responseData, null, 2));
+    res.json(responseData);
   } catch (err) {
     next(err);
   }
