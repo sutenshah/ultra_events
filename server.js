@@ -3243,6 +3243,24 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
 
     // Check if this specific order has been scanned
     if (order.IsScanned === true || order.IsScanned === 1) {
+      // Format scanned date/time for display
+      let scannedAtFormatted = 'N/A';
+      if (order.ScannedAt) {
+        try {
+          const scannedDate = new Date(order.ScannedAt);
+          scannedAtFormatted = scannedDate.toLocaleString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+        } catch (e) {
+          scannedAtFormatted = String(order.ScannedAt);
+        }
+      }
+
       return res.json({
         success: true,
         message: 'QR code already scanned. This ticket has been used.',
@@ -3256,8 +3274,11 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           eventDate: order.EventDate,
           eventTime: order.EventTime,
           venue: order.Venue,
+          ticketType: order.TicketName,
+          amount: parseFloat(order.Amount),
           scannedAt: order.ScannedAt,
-          scannedBy: order.ScannedBy,
+          scannedAtFormatted: scannedAtFormatted,
+          scannedBy: order.ScannedBy || 'Unknown',
         },
       });
     }

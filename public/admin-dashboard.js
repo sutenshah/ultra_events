@@ -440,14 +440,35 @@ function scanQRCode(qrData) {
         
         if (data && data.success) {
             if (data.scanned) {
-                // Already scanned
+                // Already scanned - show detailed information
                 resultDiv.className = 'scan-result error';
+                resultDiv.style.display = 'block';
+                
+                const scannedAt = data.order.scannedAtFormatted || 
+                    (data.order.scannedAt ? new Date(data.order.scannedAt).toLocaleString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true
+                    }) : 'N/A');
+                
                 resultDiv.innerHTML = `
                     <strong>⚠️ ${data.message}</strong><br>
-                    <p style="margin-top: 10px;">
-                        This ticket was already scanned${data.order.scannedAt ? ' on ' + new Date(data.order.scannedAt).toLocaleString() : ''}<br>
-                        Scanned by: ${data.order.scannedBy || 'Unknown'}
-                    </p>
+                    <div style="margin-top: 15px; padding: 15px; background: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
+                        <div style="margin-bottom: 10px;">
+                            <strong style="color: #92400e;">📋 Order Details:</strong><br>
+                            <span style="color: #78350f;">Order Number: ${data.order.orderNumber || 'N/A'}</span><br>
+                            <span style="color: #78350f;">Customer: ${data.order.customerName || 'N/A'}</span><br>
+                            <span style="color: #78350f;">Event: ${data.order.eventName || 'N/A'}</span>
+                        </div>
+                        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #fbbf24;">
+                            <strong style="color: #92400e;">🔍 Scan Information:</strong><br>
+                            <span style="color: #78350f;">Scanned by: <strong>${data.order.scannedBy || 'Unknown'}</strong></span><br>
+                            <span style="color: #78350f;">Scanned at: <strong>${scannedAt}</strong></span>
+                        </div>
+                    </div>
                 `;
             } else {
                 // Valid ticket - show booking details
