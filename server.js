@@ -3205,23 +3205,37 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
       .request()
       .input('orderNumber', sql.NVarChar, orderNumber)
       .query(`
-        SELECT 
-          o.*,
+        SELECT TOP 1
+          o.OrderID,
+          o.OrderNumber,
+          o.UserID,
+          o.EventID,
+          o.TicketTypeID,
+          o.RazorpayOrderID,
+          o.RazorpayPaymentID,
+          o.Amount,
+          o.Status,
+          o.QRCode,
+          o.Email,
+          o.IsScanned,
+          o.ScannedAt,
+          o.ScannedBy,
+          o.CreatedAt,
+          o.UpdatedAt,
           u.FullName as CustomerName,
           u.PhoneNumber,
-          u.Email,
+          u.Email as UserEmail,
           e.EventName,
           e.EventDate,
           e.EventTime,
           e.Venue,
-          tt.TicketName,
-          o.ScannedAt,
-          o.ScannedBy
+          tt.TicketName
         FROM Orders o
         JOIN Users u ON o.UserID = u.UserID
         JOIN Events e ON o.EventID = e.EventID
         JOIN TicketTypes tt ON o.TicketTypeID = tt.TicketTypeID
-        WHERE o.OrderNumber = @orderNumber;
+        WHERE o.OrderNumber = @orderNumber
+        ORDER BY o.OrderID DESC;
       `);
 
     if (!orderResult.recordset.length) {
@@ -3251,28 +3265,47 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
 
     // Check if this specific order has been scanned
     if (order.IsScanned === true || order.IsScanned === 1) {
+      // Handle arrays - take the last value (most recent scan)
+      let scannedBy = order.ScannedBy;
+      let scannedAt = order.ScannedAt;
+      
+      if (Array.isArray(scannedBy)) {
+        scannedBy = scannedBy[scannedBy.length - 1] || scannedBy[0] || 'Unknown';
+        console.log('⚠️ ScannedBy was array, using last value:', scannedBy);
+      }
+      
+      if (Array.isArray(scannedAt)) {
+        scannedAt = scannedAt[scannedAt.length - 1] || scannedAt[0] || null;
+        console.log('⚠️ ScannedAt was array, using last value:', scannedAt);
+      }
+      
       // Format scanned date/time for display
       let scannedAtFormatted = 'N/A';
-      if (order.ScannedAt) {
+      if (scannedAt) {
         try {
-          const scannedDate = new Date(order.ScannedAt);
-          scannedAtFormatted = scannedDate.toLocaleString('en-IN', {
-            day: 'numeric',
-            month: 'short',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true
-          });
+          const scannedDate = new Date(scannedAt);
+          if (!isNaN(scannedDate.getTime())) {
+            scannedAtFormatted = scannedDate.toLocaleString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            });
+          } else {
+            scannedAtFormatted = String(scannedAt);
+          }
         } catch (e) {
-          scannedAtFormatted = String(order.ScannedAt);
+          console.error('❌ Error formatting scannedAt:', e);
+          scannedAtFormatted = String(scannedAt);
         }
       }
 
       console.log('📤 Sending already-scanned response:', {
         orderNumber: order.OrderNumber,
-        scannedBy: order.ScannedBy,
-        scannedAt: order.ScannedAt,
+        scannedBy: scannedBy,
+        scannedAt: scannedAt,
         scannedAtFormatted: scannedAtFormatted,
         IsScanned: order.IsScanned
       });
@@ -3295,9 +3328,9 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
           amount: parseFloat(order.Amount),
           totalAmount: parseFloat(order.Amount),
           totalTicketsPurchased: 1, // One order = one ticket
-          scannedAt: order.ScannedAt,
+          scannedAt: scannedAt,
           scannedAtFormatted: scannedAtFormatted,
-          scannedBy: order.ScannedBy || 'Unknown',
+          scannedBy: scannedBy || 'Unknown',
         },
       });
     }

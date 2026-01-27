@@ -682,19 +682,33 @@ function showBookingDetails(order, isAlreadyScanned = false) {
     console.log('🎯 Displaying booking details modal');
     console.log('🎯 bookingDetails element:', bookingDetails);
     console.log('🎯 Current display style:', bookingDetails.style.display);
+    console.log('🎯 bookingInfo innerHTML length:', bookingInfo.innerHTML.length);
     
     // Force display
     bookingDetails.style.display = 'block';
     bookingDetails.style.visibility = 'visible';
+    bookingDetails.style.opacity = '1';
+    
+    // Make sure it's not hidden by CSS
+    bookingDetails.classList.remove('hidden');
+    bookingDetails.removeAttribute('hidden');
     
     console.log('✅ Modal display set to block');
     console.log('✅ Modal computed style:', window.getComputedStyle(bookingDetails).display);
     console.log('✅ Modal offsetHeight:', bookingDetails.offsetHeight);
     console.log('✅ Modal offsetWidth:', bookingDetails.offsetWidth);
+    console.log('✅ Modal is visible:', bookingDetails.offsetHeight > 0 && bookingDetails.offsetWidth > 0);
+    
+    // Force a reflow to ensure display
+    void bookingDetails.offsetHeight;
     
     // Scroll to top of modal to ensure it's visible
     setTimeout(() => {
-        bookingDetails.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        try {
+            bookingDetails.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (e) {
+            console.error('Error scrolling to modal:', e);
+        }
     }, 100);
 }
 
