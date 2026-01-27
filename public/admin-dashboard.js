@@ -508,8 +508,8 @@ function showBookingDetails(order) {
             </span>
         </div>
         <div class="booking-info-item">
-            <label>Order Number:</label>
-            <span><strong>${order.orderNumber}</strong></span>
+            <label>Order Number${(order.orderNumbers && order.orderNumbers.length > 1) ? 's' : ''}:</label>
+            <span><strong>${order.orderNumber || (order.orderNumbers ? order.orderNumbers.join(', ') : 'N/A')}</strong></span>
         </div>
         <div class="booking-info-item">
             <label>Customer Name:</label>
@@ -545,6 +545,12 @@ function showBookingDetails(order) {
         </div>
     `;
     
+    // Store order data for confirmation (ensure all required fields are present)
+    console.log('📋 Booking details shown for order:', order);
+    console.log('📋 Order has userId:', order.userId, 'eventId:', order.eventId);
+    console.log('📋 Order has orderIds:', order.orderIds);
+    console.log('📋 Order has orderNumber:', order.orderNumber);
+    
     // Set accept button text
     const confirmBtn = document.getElementById('confirmBtn');
     confirmBtn.disabled = false;
@@ -564,8 +570,21 @@ function closeBookingDetails() {
 
 // Confirm entry
 async function confirmEntry() {
-    if (!currentScannedOrder || (!currentScannedOrder.userId || !currentScannedOrder.eventId)) {
-        alert('No order to confirm');
+    console.log('🔍 Attempting to confirm entry...');
+    console.log('🔍 currentScannedOrder:', currentScannedOrder);
+    
+    if (!currentScannedOrder) {
+        console.error('❌ No currentScannedOrder object');
+        alert('No order to confirm. Please scan the QR code again.');
+        return;
+    }
+    
+    if (!currentScannedOrder.userId || !currentScannedOrder.eventId) {
+        console.error('❌ Missing userId or eventId');
+        console.error('❌ userId:', currentScannedOrder.userId);
+        console.error('❌ eventId:', currentScannedOrder.eventId);
+        console.error('❌ Full order object:', JSON.stringify(currentScannedOrder, null, 2));
+        alert('Invalid order data. Please scan the QR code again.');
         return;
     }
 

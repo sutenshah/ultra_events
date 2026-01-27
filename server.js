@@ -3295,6 +3295,10 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
 
     // Calculate total amount
     const totalAmount = orders.reduce((sum, o) => sum + parseFloat(o.Amount || 0), 0);
+    
+    // Get all order numbers (show first one, or all if multiple)
+    const orderNumbers = orders.map(o => o.OrderNumber);
+    const orderNumber = orderNumbers.length === 1 ? orderNumbers[0] : orderNumbers.join(', ');
 
     // Return order details without marking as scanned (scanner will confirm)
     res.json({
@@ -3304,6 +3308,9 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
       order: {
         userId: userId,
         eventId: eventId,
+        orderNumber: orderNumber,
+        orderNumbers: orderNumbers,
+        orderIds: orders.map(o => o.OrderID),
         customerName: firstOrder.CustomerName,
         phoneNumber: firstOrder.PhoneNumber,
         email: firstOrder.Email,
@@ -3313,7 +3320,6 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         venue: firstOrder.Venue,
         totalTicketsPurchased: totalTickets,
         totalAmount: totalAmount,
-        orderIds: orders.map(o => o.OrderID),
       },
     });
   } catch (err) {
