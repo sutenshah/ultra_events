@@ -2735,75 +2735,123 @@ app.get('/api/admin/me', authenticateAdmin, async (req, res, next) => {
 // Dashboard - Get KPIs and statistics
 app.get('/api/admin/dashboard', authenticateAdmin, async (req, res, next) => {
   try {
-    // Total Events
-    const eventsResult = await pool
-      .request()
-      .query('SELECT COUNT(*) as total FROM Events WHERE IsActive = 1;');
-    const totalEvents = eventsResult.recordset[0]?.total || 0;
+    const isScanner = req.admin.role === 'scanner';
+    const today = new Date().toISOString().split('T')[0];
 
-    // Tickets Sold (from completed orders)
-    const ticketsResult = await pool
-      .request()
-      .query(`
-        SELECT COUNT(*) as total 
-        FROM Orders 
-        WHERE Status = 'completed';
-      `);
-    const ticketsSold = ticketsResult.recordset[0]?.total || 0;
+    if (isScanner) {
+      // Scanner role: Show only upcoming and current events
+      const eventsResult = await pool
+        .request()
+        .input('today', sql.Date, today)
+        .query(`
+          SELECT 
+            e.EventID,
+            e.EventName,
+            e.EventDate,
+            e.EventTime,
+            e.Venue,
+            e.Description,
+            e.ImageURL,
+            COUNT(DISTINCT CASE WHEN o.Status = 'completed' THEN o.OrderID END) as TicketsSold,
+            COUNT(DISTINCT CASE WHEN o.Status = 'completed' AND o.IsScanned = 1 THEN o.OrderID END) as TicketsScanned
+          FROM Events e
+          LEFT JOIN Orders o ON e.EventID = o.EventID
+          WHERE e.IsActive = 1 AND e.EventDate >= @today
+          GROUP BY e.EventID, e.EventName, e.EventDate, e.EventTime, e.Venue, e.Description, e.ImageURL
+          ORDER BY e.EventDate ASC, e.EventTime ASC;
+        `);
 
-    // Total Revenue (from completed orders)
-    const revenueResult = await pool
-      .request()
-      .query(`
-        SELECT ISNULL(SUM(Amount), 0) as total 
-        FROM Orders 
-        WHERE Status = 'completed';
-      `);
-    const totalRevenue = parseFloat(revenueResult.recordset[0]?.total || 0);
+      const events = eventsResult.recordset.map(event => ({
+        id: event.EventID,
+        name: event.EventName,
+        date: new Date(event.EventDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        time: event.EventTime,
+        venue: event.Venue,
+        description: event.Description,
+        imageURL: event.ImageURL,
+        ticketsSold: parseInt(event.TicketsSold || 0),
+        ticketsScanned: parseInt(event.TicketsScanned || 0),
+      }));
 
-    // Pending Orders
-    const pendingResult = await pool
-      .request()
-      .query('SELECT COUNT(*) as total FROM Orders WHERE Status = \'pending\';');
-    const pendingOrders = pendingResult.recordset[0]?.total || 0;
+      res.json({
+        success: true,
+        stats: {
+          upcomingEvents: events.length,
+        },
+        events,
+      });
+    } else {
+      // Admin role: Show full dashboard stats
+      // Total Events
+      const eventsResult = await pool
+        .request()
+        .query('SELECT COUNT(*) as total FROM Events WHERE IsActive = 1;');
+      const totalEvents = eventsResult.recordset[0]?.total || 0;
 
-    // Recent Events with stats
-    const recentEventsResult = await pool
-      .request()
-      .query(`
-        SELECT TOP 10
-          e.EventID,
-          e.EventName,
-          e.EventDate,
-          e.EventTime,
-          e.Venue,
-          COUNT(DISTINCT CASE WHEN o.Status = 'completed' THEN o.OrderID END) as Tickets,
-          ISNULL(SUM(CASE WHEN o.Status = 'completed' THEN o.Amount ELSE 0 END), 0) as Revenue
-        FROM Events e
-        LEFT JOIN Orders o ON e.EventID = o.EventID
-        WHERE e.IsActive = 1
-        GROUP BY e.EventID, e.EventName, e.EventDate, e.EventTime, e.Venue
-        ORDER BY e.EventDate DESC;
-      `);
+      // Tickets Sold (from completed orders)
+      const ticketsResult = await pool
+        .request()
+        .query(`
+          SELECT COUNT(*) as total 
+          FROM Orders 
+          WHERE Status = 'completed';
+        `);
+      const ticketsSold = ticketsResult.recordset[0]?.total || 0;
 
-    const recentEvents = recentEventsResult.recordset.map(event => ({
-      id: event.EventID,
-      name: event.EventName,
-      date: new Date(event.EventDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      tickets: parseInt(event.Tickets || 0),
-      revenue: parseFloat(event.Revenue || 0),
-    }));
+      // Total Revenue (from completed orders)
+      const revenueResult = await pool
+        .request()
+        .query(`
+          SELECT ISNULL(SUM(Amount), 0) as total 
+          FROM Orders 
+          WHERE Status = 'completed';
+        `);
+      const totalRevenue = parseFloat(revenueResult.recordset[0]?.total || 0);
 
-    res.json({
-      success: true,
-      stats: {
-        totalEvents: parseInt(totalEvents),
-        ticketsSold: parseInt(ticketsSold),
-        totalRevenue: totalRevenue,
-        pendingOrders: parseInt(pendingOrders),
-      },
-      recentEvents,
-    });
+      // Pending Orders
+      const pendingResult = await pool
+        .request()
+        .query('SELECT COUNT(*) as total FROM Orders WHERE Status = \'pending\';');
+      const pendingOrders = pendingResult.recordset[0]?.total || 0;
+
+      // Recent Events with stats
+      const recentEventsResult = await pool
+        .request()
+        .query(`
+          SELECT TOP 10
+            e.EventID,
+            e.EventName,
+            e.EventDate,
+            e.EventTime,
+            e.Venue,
+            COUNT(DISTINCT CASE WHEN o.Status = 'completed' THEN o.OrderID END) as Tickets,
+            ISNULL(SUM(CASE WHEN o.Status = 'completed' THEN o.Amount ELSE 0 END), 0) as Revenue
+          FROM Events e
+          LEFT JOIN Orders o ON e.EventID = o.EventID
+          WHERE e.IsActive = 1
+          GROUP BY e.EventID, e.EventName, e.EventDate, e.EventTime, e.Venue
+          ORDER BY e.EventDate DESC;
+        `);
+
+      const recentEvents = recentEventsResult.recordset.map(event => ({
+        id: event.EventID,
+        name: event.EventName,
+        date: new Date(event.EventDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        tickets: parseInt(event.Tickets || 0),
+        revenue: parseFloat(event.Revenue || 0),
+      }));
+
+      res.json({
+        success: true,
+        stats: {
+          totalEvents: parseInt(totalEvents),
+          ticketsSold: parseInt(ticketsSold),
+          totalRevenue: totalRevenue,
+          pendingOrders: parseInt(pendingOrders),
+        },
+        recentEvents,
+      });
+    }
   } catch (err) {
     next(err);
   }
@@ -3112,7 +3160,7 @@ app.get('/api/admin/orders', authenticateAdmin, async (req, res, next) => {
 // QR SCAN ENDPOINTS
 // ============================================================
 
-// Scan QR code and validate ticket
+// Scan QR code and validate ticket (validate only, don't mark as scanned)
 app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
   try {
     const { qrData } = req.body;
@@ -3141,8 +3189,12 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         SELECT 
           o.*,
           u.FullName as CustomerName,
+          u.PhoneNumber,
+          u.Email,
           e.EventName,
           e.EventDate,
+          e.EventTime,
+          e.Venue,
           tt.TicketName
         FROM Orders o
         JOIN Users u ON o.UserID = u.UserID
@@ -3178,18 +3230,81 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
         order: {
           orderNumber: order.OrderNumber,
           customerName: order.CustomerName,
+          phoneNumber: order.PhoneNumber,
+          email: order.Email,
           eventName: order.EventName,
+          eventDate: order.EventDate,
+          eventTime: order.EventTime,
+          venue: order.Venue,
           ticketType: order.TicketName,
+          amount: parseFloat(order.Amount),
           scannedAt: order.ScannedAt,
           scannedBy: order.ScannedBy,
         },
       });
     }
 
+    // Return order details without marking as scanned (scanner will confirm)
+    res.json({
+      success: true,
+      message: 'Ticket validated successfully',
+      scanned: false,
+      order: {
+        orderId: order.OrderID,
+        orderNumber: order.OrderNumber,
+        customerName: order.CustomerName,
+        phoneNumber: order.PhoneNumber,
+        email: order.Email,
+        eventName: order.EventName,
+        eventDate: order.EventDate,
+        eventTime: order.EventTime,
+        venue: order.Venue,
+        ticketType: order.TicketName,
+        amount: parseFloat(order.Amount),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Confirm scan and mark ticket as scanned
+app.post('/api/admin/scan/confirm', authenticateAdmin, async (req, res, next) => {
+  try {
+    const { orderId } = req.body;
+
+    if (!orderId) {
+      return res.status(400).json({ success: false, message: 'Order ID is required' });
+    }
+
+    // Verify order exists and is valid
+    const orderResult = await pool
+      .request()
+      .input('orderId', sql.Int, orderId)
+      .query(`
+        SELECT OrderID, OrderNumber, Status, IsScanned
+        FROM Orders
+        WHERE OrderID = @orderId;
+      `);
+
+    if (!orderResult.recordset.length) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    const order = orderResult.recordset[0];
+
+    if (order.Status !== 'completed') {
+      return res.status(400).json({ success: false, message: 'Payment not completed' });
+    }
+
+    if (order.IsScanned) {
+      return res.status(400).json({ success: false, message: 'Ticket already scanned' });
+    }
+
     // Mark as scanned
     await pool
       .request()
-      .input('orderId', sql.Int, order.OrderID)
+      .input('orderId', sql.Int, orderId)
       .input('scannedBy', sql.NVarChar, req.admin.Username || req.admin.FullName)
       .query(`
         UPDATE Orders 
@@ -3201,15 +3316,9 @@ app.post('/api/admin/scan', authenticateAdmin, async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'Ticket scanned successfully',
-      scanned: true,
+      message: 'Entry confirmed successfully',
       order: {
         orderNumber: order.OrderNumber,
-        customerName: order.CustomerName,
-        eventName: order.EventName,
-        eventDate: order.EventDate,
-        ticketType: order.TicketName,
-        amount: parseFloat(order.Amount),
       },
     });
   } catch (err) {

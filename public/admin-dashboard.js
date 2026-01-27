@@ -112,25 +112,60 @@ async function loadDashboard() {
         return;
     }
 
-    // Update stats
-    document.getElementById('statTotalEvents').textContent = data.stats.totalEvents;
-    document.getElementById('statTicketsSold').textContent = data.stats.ticketsSold;
-    document.getElementById('statTotalRevenue').textContent = formatCurrency(data.stats.totalRevenue);
-    document.getElementById('statPendingOrders').textContent = data.stats.pendingOrders;
+    const adminInfo = JSON.parse(localStorage.getItem('adminInfo') || '{}');
+    const isScanner = adminInfo.role === 'scanner';
 
-    // Update recent events table
-    const tbody = document.getElementById('recentEventsTable');
-    if (data.recentEvents.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No events found</td></tr>';
+    if (isScanner) {
+        // Scanner view: Show upcoming events
+        document.getElementById('statTotalEvents').textContent = data.stats.upcomingEvents || 0;
+        document.getElementById('statTicketsSold').textContent = '-';
+        document.getElementById('statTotalRevenue').textContent = '-';
+        document.getElementById('statPendingOrders').textContent = '-';
+
+        // Update table headers
+        document.getElementById('eventsTableTitle').textContent = 'Upcoming & Current Events';
+        document.getElementById('eventsTableCol3').textContent = 'Venue';
+        document.getElementById('eventsTableCol4').textContent = 'Tickets Status';
+
+        // Show events as table rows
+        const tbody = document.getElementById('recentEventsTable');
+        if (data.events && data.events.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No upcoming events found</td></tr>';
+        } else {
+            tbody.innerHTML = data.events.map(event => `
+                <tr>
+                    <td><strong>${event.name}</strong></td>
+                    <td>${event.date} ${event.time || ''}</td>
+                    <td>${event.venue || 'TBA'}</td>
+                    <td>${event.ticketsSold || 0} sold, ${event.ticketsScanned || 0} scanned</td>
+                </tr>
+            `).join('');
+        }
     } else {
-        tbody.innerHTML = data.recentEvents.map(event => `
-            <tr>
-                <td>${event.name}</td>
-                <td>${event.date}</td>
-                <td>${event.tickets}</td>
-                <td>${formatCurrency(event.revenue)}</td>
-            </tr>
-        `).join('');
+        // Reset table headers for admin
+        document.getElementById('eventsTableTitle').textContent = 'Recent Events';
+        document.getElementById('eventsTableCol3').textContent = 'Tickets';
+        document.getElementById('eventsTableCol4').textContent = 'Revenue';
+        // Admin view: Show full stats
+        document.getElementById('statTotalEvents').textContent = data.stats.totalEvents;
+        document.getElementById('statTicketsSold').textContent = data.stats.ticketsSold;
+        document.getElementById('statTotalRevenue').textContent = formatCurrency(data.stats.totalRevenue);
+        document.getElementById('statPendingOrders').textContent = data.stats.pendingOrders;
+
+        // Update recent events table
+        const tbody = document.getElementById('recentEventsTable');
+        if (data.recentEvents.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No events found</td></tr>';
+        } else {
+            tbody.innerHTML = data.recentEvents.map(event => `
+                <tr>
+                    <td>${event.name}</td>
+                    <td>${event.date}</td>
+                    <td>${event.tickets}</td>
+                    <td>${formatCurrency(event.revenue)}</td>
+                </tr>
+            `).join('');
+        }
     }
 }
 
@@ -307,35 +342,168 @@ function stopScanner() {
     document.getElementById('scanResult').style.display = 'none';
 }
 
+// Store current scanned order
+let currentScannedOrder = null;
+
 // Manual QR input (for testing or when camera not available)
 function scanQRCode(qrData) {
     const resultDiv = document.getElementById('scanResult');
     resultDiv.style.display = 'block';
     resultDiv.textContent = 'Scanning...';
     resultDiv.className = 'scan-result';
+    
+    // Hide booking details if open
+    document.getElementById('bookingDetails').style.display = 'none';
+    currentScannedOrder = null;
 
     apiCall('/api/admin/scan', {
         method: 'POST',
         body: JSON.stringify({ qrData }),
     }).then(data => {
         if (data && data.success) {
-            resultDiv.className = 'scan-result success';
             if (data.scanned) {
+                // Already scanned
+                resultDiv.className = 'scan-result error';
                 resultDiv.innerHTML = `
-                    <strong>✅ ${data.message}</strong><br>
+                    <strong>⚠️ ${data.message}</strong><br>
                     <p style="margin-top: 10px;">
-                        Order: ${data.order.orderNumber}<br>
-                        Customer: ${data.order.customerName}<br>
-                        Event: ${data.order.eventName}<br>
-                        Ticket: ${data.order.ticketType}
+                        This ticket was already scanned on ${data.order.scannedAt ? new Date(data.order.scannedAt).toLocaleString() : 'N/A'}<br>
+                        Scanned by: ${data.order.scannedBy || 'Unknown'}
                     </p>
                 `;
+            } else {
+                // Valid ticket - show booking details
+                currentScannedOrder = data.order;
+                showBookingDetails(data.order);
+                resultDiv.style.display = 'none';
             }
         } else {
             resultDiv.className = 'scan-result error';
             resultDiv.textContent = data?.message || 'Scan failed';
         }
+    }).catch(err => {
+        resultDiv.className = 'scan-result error';
+        resultDiv.textContent = 'Error scanning ticket. Please try again.';
+        console.error('Scan error:', err);
     });
+}
+
+// Show booking details modal
+function showBookingDetails(order) {
+    const bookingInfo = document.getElementById('bookingInfo');
+    bookingInfo.innerHTML = `
+        <div class="booking-info-item">
+            <label>Order Number:</label>
+            <span><strong>${order.orderNumber}</strong></span>
+        </div>
+        <div class="booking-info-item">
+            <label>Customer Name:</label>
+            <span>${order.customerName || 'N/A'}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Phone Number:</label>
+            <span>${order.phoneNumber || 'N/A'}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Email:</label>
+            <span>${order.email || 'N/A'}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Event:</label>
+            <span>${order.eventName || 'N/A'}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Date & Time:</label>
+            <span>${order.eventDate ? new Date(order.eventDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A'} ${order.eventTime || ''}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Venue:</label>
+            <span>${order.venue || 'TBA'}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Ticket Type:</label>
+            <span>${order.ticketType || 'N/A'}</span>
+        </div>
+        <div class="booking-info-item">
+            <label>Amount Paid:</label>
+            <span><strong>${formatCurrency(order.amount || 0)}</strong></span>
+        </div>
+    `;
+    
+    document.getElementById('bookingDetails').style.display = 'block';
+    document.getElementById('confirmBtn').disabled = false;
+    document.getElementById('rejectBtn').disabled = false;
+}
+
+// Close booking details
+function closeBookingDetails() {
+    document.getElementById('bookingDetails').style.display = 'none';
+    currentScannedOrder = null;
+    stopScanner();
+}
+
+// Confirm entry
+async function confirmEntry() {
+    if (!currentScannedOrder || !currentScannedOrder.orderId) {
+        alert('No order to confirm');
+        return;
+    }
+
+    const confirmBtn = document.getElementById('confirmBtn');
+    const rejectBtn = document.getElementById('rejectBtn');
+    confirmBtn.disabled = true;
+    rejectBtn.disabled = true;
+    confirmBtn.textContent = 'Processing...';
+
+    const result = await apiCall('/api/admin/scan/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ orderId: currentScannedOrder.orderId }),
+    });
+
+    if (result && result.success) {
+        const resultDiv = document.getElementById('scanResult');
+        resultDiv.style.display = 'block';
+        resultDiv.className = 'scan-result success';
+        resultDiv.innerHTML = `
+            <strong>✅ Entry Confirmed!</strong><br>
+            <p style="margin-top: 10px;">
+                Order: ${currentScannedOrder.orderNumber}<br>
+                Customer: ${currentScannedOrder.customerName}<br>
+                Entry granted successfully.
+            </p>
+        `;
+        
+        document.getElementById('bookingDetails').style.display = 'none';
+        currentScannedOrder = null;
+        
+        // Reset buttons
+        confirmBtn.disabled = false;
+        rejectBtn.disabled = false;
+        confirmBtn.textContent = '✅ Accept Entry';
+    } else {
+        alert(result?.message || 'Failed to confirm entry');
+        confirmBtn.disabled = false;
+        rejectBtn.disabled = false;
+        confirmBtn.textContent = '✅ Accept Entry';
+    }
+}
+
+// Reject entry
+function rejectEntry() {
+    if (!currentScannedOrder) {
+        alert('No order to reject');
+        return;
+    }
+
+    if (confirm('Are you sure you want to reject this entry? The ticket will remain unscanned.')) {
+        const resultDiv = document.getElementById('scanResult');
+        resultDiv.style.display = 'block';
+        resultDiv.className = 'scan-result error';
+        resultDiv.textContent = 'Entry rejected. Ticket remains valid for scanning.';
+        
+        document.getElementById('bookingDetails').style.display = 'none';
+        currentScannedOrder = null;
+    }
 }
 
 // Add manual QR input field
@@ -430,9 +598,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const adminInfo = JSON.parse(localStorage.getItem('adminInfo') || '{}');
     document.getElementById('userName').textContent = adminInfo.fullName || adminInfo.username || 'Admin';
 
-    // Check role and show/hide users menu
+    // Check role and show/hide menus
     if (adminInfo.role === 'admin' || adminInfo.role === 'superadmin') {
         document.getElementById('usersNav').style.display = 'block';
+    }
+
+    // Hide Events and Orders for scanner role
+    if (adminInfo.role === 'scanner') {
+        document.getElementById('eventsNav').style.display = 'none';
+        document.getElementById('ordersNav').style.display = 'none';
     }
 
     // Initialize navigation
