@@ -798,13 +798,21 @@
                 <h2>Scan Entry Ticket</h2>
                 <p style="color: #666; margin: 20px 0;">Use your device camera to scan customer QR codes</p>
                 
-                <video id="video" autoplay playsinline></video>
+                <video id="video" autoplay playsinline muted></video>
                 <canvas id="canvas" style="display: none;"></canvas>
 
                 <button class="btn btn-primary" onclick="startScanner()" id="startScannerBtn">Start Camera</button>
                 <button class="btn btn-secondary" onclick="stopScanner()" id="stopScannerBtn" style="display: none;">Stop Camera</button>
 
                 <div class="scan-result" id="scanResult"></div>
+
+                <!-- Manual QR Input (Fallback) -->
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
+                    <p style="margin-bottom: 10px; color: #666; font-size: 14px;">Or enter QR code manually:</p>
+                    <input type="text" id="manualQRInput" placeholder="Paste QR code data here" 
+                           style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; font-size: 14px; box-sizing: border-box;">
+                    <button class="btn btn-primary" onclick="scanQRCode(document.getElementById('manualQRInput').value)" style="width: 100%;">Scan QR Code</button>
+                </div>
                 
                 <!-- Booking Details Modal -->
                 <div class="booking-details" id="bookingDetails" style="display: none;">

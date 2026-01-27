@@ -291,8 +291,28 @@ function startScanner() {
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
+    const resultDiv = document.getElementById('scanResult');
 
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    // Check if jsQR is loaded
+    if (typeof jsQR === 'undefined') {
+        resultDiv.style.display = 'block';
+        resultDiv.className = 'scan-result error';
+        resultDiv.textContent = 'QR scanner library not loaded. Please refresh the page.';
+        console.error('jsQR library not found');
+        return;
+    }
+
+    // Clear previous results
+    resultDiv.style.display = 'none';
+    resultDiv.textContent = '';
+
+    navigator.mediaDevices.getUserMedia({ 
+        video: { 
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+        } 
+    })
         .then(stream => {
             scannerStream = stream;
             video.srcObject = stream;
@@ -300,32 +320,52 @@ function startScanner() {
             document.getElementById('startScannerBtn').style.display = 'none';
             document.getElementById('stopScannerBtn').style.display = 'inline-block';
 
+            // Show scanning indicator
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'scan-result';
+            resultDiv.textContent = '📷 Scanning... Point camera at QR code';
+
             // QR scanning with jsQR library
             scannerInterval = setInterval(() => {
                 if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    
-                    // Use jsQR to scan QR code
-                    if (typeof jsQR !== 'undefined') {
-                        const code = jsQR(imageData.data, imageData.width, imageData.height);
+                    try {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        
+                        // Use jsQR to scan QR code
+                        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                            inversionAttempts: 'dontInvert',
+                        });
+                        
                         if (code) {
-                            console.log('QR Code detected:', code.data);
+                            console.log('✅ QR Code detected:', code.data);
+                            stopScanner(); // Stop camera first
                             scanQRCode(code.data);
-                            stopScanner(); // Stop after successful scan
                         }
-                    } else {
-                        console.warn('jsQR library not loaded. Please refresh the page.');
+                    } catch (error) {
+                        console.error('Error during QR scan:', error);
                     }
                 }
             }, 200); // Check every 200ms for faster detection
         })
         .catch(err => {
             console.error('Camera error:', err);
-            alert('Failed to access camera. Please check permissions or use manual input.');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'scan-result error';
+            
+            if (err.name === 'NotAllowedError') {
+                resultDiv.textContent = 'Camera permission denied. Please allow camera access and try again.';
+            } else if (err.name === 'NotFoundError') {
+                resultDiv.textContent = 'No camera found. Please use manual input below.';
+            } else {
+                resultDiv.textContent = 'Failed to access camera: ' + err.message + '. Please use manual input below.';
+            }
+            
+            document.getElementById('startScannerBtn').style.display = 'inline-block';
+            document.getElementById('stopScannerBtn').style.display = 'none';
         });
 }
 
@@ -350,19 +390,28 @@ let currentScannedOrder = null;
 
 // Manual QR input (for testing or when camera not available)
 function scanQRCode(qrData) {
+    if (!qrData || qrData.trim() === '') {
+        alert('Please enter or scan a QR code');
+        return;
+    }
+
     const resultDiv = document.getElementById('scanResult');
     resultDiv.style.display = 'block';
-    resultDiv.textContent = 'Scanning...';
+    resultDiv.textContent = '🔍 Validating QR code...';
     resultDiv.className = 'scan-result';
     
     // Hide booking details if open
     document.getElementById('bookingDetails').style.display = 'none';
     currentScannedOrder = null;
 
+    console.log('Scanning QR data:', qrData);
+
     apiCall('/api/admin/scan', {
         method: 'POST',
-        body: JSON.stringify({ qrData }),
+        body: JSON.stringify({ qrData: qrData.trim() }),
     }).then(data => {
+        console.log('Scan response:', data);
+        
         if (data && data.success) {
             if (data.scanned) {
                 // Already scanned
@@ -370,7 +419,7 @@ function scanQRCode(qrData) {
                 resultDiv.innerHTML = `
                     <strong>⚠️ ${data.message}</strong><br>
                     <p style="margin-top: 10px;">
-                        This ticket was already scanned on ${data.order.scannedAt ? new Date(data.order.scannedAt).toLocaleString() : 'N/A'}<br>
+                        This ticket was already scanned${data.order.scannedAt ? ' on ' + new Date(data.order.scannedAt).toLocaleString() : ''}<br>
                         Scanned by: ${data.order.scannedBy || 'Unknown'}
                     </p>
                 `;
@@ -382,12 +431,21 @@ function scanQRCode(qrData) {
             }
         } else {
             resultDiv.className = 'scan-result error';
-            resultDiv.textContent = data?.message || 'Scan failed';
+            resultDiv.textContent = data?.message || 'Invalid QR code. Please try again.';
+            console.error('Scan failed:', data);
         }
     }).catch(err => {
         resultDiv.className = 'scan-result error';
-        resultDiv.textContent = 'Error scanning ticket. Please try again.';
+        resultDiv.textContent = 'Error scanning ticket. Please check your connection and try again.';
         console.error('Scan error:', err);
+        
+        // Show more details in console for debugging
+        if (err.message) {
+            console.error('Error message:', err.message);
+        }
+        if (err.response) {
+            console.error('Error response:', err.response);
+        }
     });
 }
 
@@ -659,6 +717,26 @@ document.addEventListener('DOMContentLoaded', () => {
             .catch((registrationError) => {
                 console.log('SW registration failed: ', registrationError);
             });
+    }
+
+    // Check if jsQR library is loaded
+    setTimeout(() => {
+        if (typeof jsQR === 'undefined') {
+            console.error('⚠️ jsQR library not loaded! QR scanning will not work.');
+            console.log('Please check if the jsQR script is loaded in the HTML file.');
+        } else {
+            console.log('✅ jsQR library loaded successfully');
+        }
+    }, 1000);
+
+    // Add Enter key support for manual QR input
+    const manualInput = document.getElementById('manualQRInput');
+    if (manualInput) {
+        manualInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                scanQRCode(manualInput.value);
+            }
+        });
     }
 });
 
