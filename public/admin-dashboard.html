@@ -293,6 +293,49 @@
             color: #6b7280;
         }
 
+        /* Events listing cards */
+        .event-card {
+            display: flex;
+            gap: 10px;
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #ffffff 0%, #f9fafb 60%, #eef2ff 100%);
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 8px 20px rgba(148, 163, 184, 0.35);
+            margin-bottom: 12px;
+            align-items: flex-start;
+        }
+
+        .event-banner {
+            font-size: 24px;
+            margin-top: 4px;
+        }
+
+        .event-content h3 {
+            font-size: 15px;
+            margin-bottom: 2px;
+        }
+
+        .event-content p {
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 6px;
+        }
+
+        .event-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            margin-bottom: 8px;
+            color: #4b5563;
+        }
+
+        .event-revenue {
+            font-weight: 600;
+            color: #16a34a;
+        }
+
         /* Dashboard stat cards */
         .stats-grid {
             display: grid;
@@ -362,6 +405,11 @@
             background: #eef2ff;
         }
 
+        /* Ticket types grid */
+        #ticketTypesContainer {
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             #sidebar {
@@ -394,7 +442,53 @@
                 padding: 12px;
             }
 
+            .views {
+                margin: 0 4px 16px;
+            }
+
+            h1 {
+                font-size: 18px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .stat-card {
+                padding: 10px 10px 8px;
+            }
+
+            .stat-value {
+                font-size: 18px;
+            }
+
             .booking-info {
+                grid-template-columns: 1fr;
+            }
+
+            /* Events listing cards should be full-width stacked */
+            .event-card {
+                margin-bottom: 12px;
+            }
+
+            .event-content h3 {
+                font-size: 15px;
+            }
+
+            .event-meta {
+                font-size: 12px;
+            }
+
+            /* Tables: allow horizontal scroll instead of overflowing */
+            .table-container {
+                overflow-x: auto;
+            }
+
+            table {
+                min-width: 520px;
+            }
+
+            #ticketTypesContainer {
                 grid-template-columns: 1fr;
             }
         }
@@ -431,28 +525,24 @@
                         </div>
                         <div class="stats-grid">
                             <div class="stat-card">
-                                <div class="stat-pill">Events</div>
                                 <div class="stat-label">Total Events</div>
                                 <div class="stat-value" id="statTotalEvents">-</div>
                                 <div class="stat-sub">Active & upcoming shows</div>
                                 <div class="stat-icon">🎉</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-pill">Tickets</div>
                                 <div class="stat-label">Tickets Sold</div>
                                 <div class="stat-value" id="statTicketsSold">-</div>
                                 <div class="stat-sub">Total confirmed entries</div>
                                 <div class="stat-icon">🎟️</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-pill">Revenue</div>
                                 <div class="stat-label">Total Revenue</div>
                                 <div class="stat-value" id="statTotalRevenue">-</div>
                                 <div class="stat-sub">All completed payments</div>
                                 <div class="stat-icon">💰</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-pill">Pending</div>
                                 <div class="stat-label">Pending Orders</div>
                                 <div class="stat-value" id="statPendingOrders">-</div>
                                 <div class="stat-sub">Awaiting payment or confirmation</div>
@@ -525,7 +615,22 @@
                                 </div>
                                 <div class="booking-info-item full-width">
                                     <label>Image URL</label>
-                                    <span><input id="eventImageURL" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d1d5db;"></span>
+                                    <span><input id="eventImageURL" placeholder="https://example.com/banner.jpg" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d1d5db;"></span>
+                                </div>
+                                <div class="booking-info-item full-width">
+                                    <label>Or Upload Image</label>
+                                    <span>
+                                        <input type="file" id="eventImageFile" accept="image/*" style="width:100%;padding:6px;border-radius:8px;border:1px solid #d1d5db;background:#f9fafb;">
+                                        <small style="display:block;margin-top:4px;font-size:11px;color:#6b7280;">
+                                            If you upload an image, it will be used instead of the Image URL.
+                                        </small>
+                                    </span>
+                                </div>
+                                <div class="booking-info-item full-width" id="eventImagePreviewWrapper" style="display:none;">
+                                    <label>Preview</label>
+                                    <span>
+                                        <img id="eventImagePreview" src="" alt="Event image preview" style="max-width:100%;border-radius:10px;border:1px solid #e5e7eb;">
+                                    </span>
                                 </div>
                             </div>
 
@@ -534,7 +639,7 @@
                                 <div class="header" style="margin-bottom:10px;">
                                     <h2 style="font-size:15px;margin:0;">Ticket Types</h2>
                                 </div>
-                                <div id="ticketTypesContainer" class="booking-info" style="grid-template-columns: repeat(3,minmax(0,1fr));gap:8px 10px;">
+                                <div id="ticketTypesContainer" class="booking-info" style="gap:8px 10px;">
                                     <!-- Rows injected by admin-dashboard.js -->
                                 </div>
                                 <div style="margin-top:10px;display:flex;justify-content:flex-end;">
@@ -548,6 +653,7 @@
                             <div class="booking-actions">
                                 <button type="submit" class="btn btn-primary">Save Event</button>
                                 <button type="button" class="btn btn-secondary" onclick="closeEventModal()">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="deleteEventBtn" onclick="deleteEvent()" style="margin-left:auto;display:none;">Delete Event</button>
                             </div>
                         </form>
                     </div>

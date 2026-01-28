@@ -25,7 +25,6 @@ async function apiCall(endpoint, options = {}) {
     };
 
     try {
-        console.log(`📤 API Call: ${API_BASE}${endpoint}`);
         const response = await fetch(`${API_BASE}${endpoint}`, {
             ...defaultOptions,
             ...options,
@@ -35,26 +34,19 @@ async function apiCall(endpoint, options = {}) {
             },
         });
 
-        console.log(`📥 Response status: ${response.status} ${response.statusText}`);
-
         if (response.status === 401) {
-            console.error('❌ Unauthorized - logging out');
             logout();
             return null;
         }
 
         if (!response.ok) {
-            console.error(`❌ Response not OK: ${response.status} ${response.statusText}`);
             const errorText = await response.text();
-            console.error('❌ Error response body:', errorText);
             throw new Error(`API call failed: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
-        console.log(`✅ API response received for ${endpoint}:`, data);
         return data;
     } catch (error) {
-        console.error(`❌ API call error for ${endpoint}:`, error);
         throw error;
     }
 }
@@ -302,7 +294,7 @@ async function loadEvents() {
                 <div class="event-banner">📅</div>
                 <div class="event-content">
                     <h3>${event.name}</h3>
-                    <p style="color: #666; margin-bottom: 12px;">📅 ${formatDate(event.date)}</p>
+                    <p>📅 ${formatDate(event.date)}</p>
                     <div class="event-meta">
                         <span>Tickets: <strong>${event.ticketsSold}</strong></span>
                         <span class="event-revenue">${formatCurrency(event.revenue)}</span>
@@ -320,9 +312,23 @@ function showCreateEvent() {
     document.getElementById('eventId').value = '';
     currentTicketTypes = [];
     renderTicketTypes();
+
+    // Reset image inputs/preview
+    const fileInput = document.getElementById('eventImageFile');
+    const previewWrapper = document.getElementById('eventImagePreviewWrapper');
+    const previewImg = document.getElementById('eventImagePreview');
+    if (fileInput) fileInput.value = '';
+    if (previewWrapper && previewImg) {
+        previewImg.src = '';
+        previewWrapper.style.display = 'none';
+    }
     const modal = document.getElementById('eventModal');
     if (modal) {
         modal.style.display = 'block';
+    }
+    const deleteBtn = document.getElementById('deleteEventBtn');
+    if (deleteBtn) {
+        deleteBtn.style.display = 'none';
     }
 }
 
@@ -348,10 +354,29 @@ async function editEvent(eventId) {
     document.getElementById('eventDescription').value = event.description || '';
     document.getElementById('eventImageURL').value = event.imageURL || '';
 
+    // Reset file input and preview
+    const fileInput = document.getElementById('eventImageFile');
+    const previewWrapper = document.getElementById('eventImagePreviewWrapper');
+    const previewImg = document.getElementById('eventImagePreview');
+    if (fileInput) fileInput.value = '';
+    if (previewWrapper && previewImg) {
+        if (event.imageURL) {
+            previewImg.src = event.imageURL;
+            previewWrapper.style.display = 'block';
+        } else {
+            previewImg.src = '';
+            previewWrapper.style.display = 'none';
+        }
+    }
+
     renderTicketTypes();
     const modal = document.getElementById('eventModal');
     if (modal) {
         modal.style.display = 'block';
+    }
+    const deleteBtn = document.getElementById('deleteEventBtn');
+    if (deleteBtn) {
+        deleteBtn.style.display = 'inline-flex';
     }
 }
 
@@ -378,13 +403,28 @@ document.getElementById('eventForm').addEventListener('submit', async (e) => {
             availableQuantity: t.totalQuantity ? Number(t.totalQuantity) : 100,
         }));
 
+    // Handle image: prefer uploaded file over manual URL
+    const imageUrlInput = document.getElementById('eventImageURL');
+    const imageFileInput = document.getElementById('eventImageFile');
+    let finalImageUrl = imageUrlInput ? imageUrlInput.value.trim() : '';
+
+    if (imageFileInput && imageFileInput.files && imageFileInput.files[0]) {
+        try {
+            const uploaded = await uploadEventImage(imageFileInput.files[0]);
+            finalImageUrl = uploaded;
+        } catch (err) {
+            alert('Failed to upload image: ' + (err.message || err));
+            return;
+        }
+    }
+
     const eventData = {
         name: document.getElementById('eventName').value,
         date: document.getElementById('eventDate').value,
         time: document.getElementById('eventTime').value,
         venue: document.getElementById('eventVenue').value,
         description: document.getElementById('eventDescription').value,
-        imageURL: document.getElementById('eventImageURL').value,
+        imageURL: finalImageUrl,
         ticketTypes: cleanedTicketTypes,
     };
 
@@ -410,6 +450,55 @@ document.getElementById('eventForm').addEventListener('submit', async (e) => {
         alert(result?.message || 'Failed to save event');
     }
 });
+
+async function deleteEvent() {
+    const eventId = document.getElementById('eventId').value;
+    if (!eventId) return;
+
+    const confirmed = confirm('Are you sure you want to delete this event? This will mark it as inactive (soft delete).');
+    if (!confirmed) return;
+
+    const result = await apiCall(`/api/admin/events/${eventId}`, {
+        method: 'DELETE',
+    });
+
+    if (result && result.success) {
+        alert('Event deleted successfully.');
+        closeEventModal();
+        loadEvents();
+        if (currentView === 'dashboard') loadDashboard();
+    } else {
+        alert(result?.message || 'Failed to delete event');
+    }
+}
+
+// Upload event image file and return URL from server
+async function uploadEventImage(file) {
+    const token = localStorage.getItem('adminToken');
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await fetch(`${API_BASE}/api/admin/events/upload-image`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        console.error('Image upload failed:', text);
+        throw new Error('Image upload failed');
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.url) {
+        throw new Error(data.message || 'Image upload failed');
+    }
+
+    return data.url;
+}
 
 // Orders
 async function loadOrders() {
@@ -500,11 +589,6 @@ function startScanner() {
                         }
                         
                         if (code) {
-                            console.log('✅ QR Code detected!');
-                            console.log('📄 QR Code data:', code.data);
-                            console.log('📄 QR Code data type:', typeof code.data);
-                            console.log('📄 QR Code data length:', code.data.length);
-                            
                             // Show detection feedback
                             resultDiv.textContent = '✅ QR Code detected! Processing...';
                             resultDiv.style.background = '#d1fae5';
@@ -578,24 +662,10 @@ function scanQRCode(qrData) {
     document.getElementById('bookingDetails').style.display = 'none';
     currentScannedOrder = null;
 
-    console.log('📱 Scanning QR data:', qrData);
-    console.log('📱 QR data type:', typeof qrData);
-    console.log('📱 QR data length:', qrData.length);
-
-    console.log('📤 Making API call to /api/admin/scan');
-    console.log('📤 QR Data being sent:', qrData.trim());
-    console.log('📤 API_BASE:', API_BASE);
-    
     apiCall('/api/admin/scan', {
         method: 'POST',
         body: JSON.stringify({ qrData: qrData.trim() }),
     }).then(data => {
-        console.log('🎉🎉🎉 THEN BLOCK EXECUTED - RESPONSE RECEIVED 🎉🎉🎉');
-        console.log('✅ Scan response received:', data);
-        console.log('✅ Response type:', typeof data);
-        console.log('✅ Response keys:', data ? Object.keys(data) : 'null');
-        console.log('✅ Full response:', JSON.stringify(data, null, 2));
-        
         if (!data) {
             console.error('❌ No data received in response');
             resultDiv.className = 'scan-result error';
@@ -604,24 +674,8 @@ function scanQRCode(qrData) {
         }
         
         if (data && data.success) {
-            console.log('✅✅✅ SUCCESS FLAG IS TRUE - PROCEEDING TO DISPLAY');
-            console.log('✅ Success flag is true');
-            console.log('✅ Scanned flag:', data.scanned);
-            console.log('✅ Order data:', data.order);
-            
-            // TEMPORARY DEBUG: Alert to confirm we're in the right branch
-            if (data.scanned) {
-                alert('DEBUG: Already scanned branch - Order: ' + (data.order?.orderNumber || 'N/A'));
-            }
-            
             if (data.scanned) {
                 // Already scanned - show full booking details but mark as scanned
-                console.log('📋 Showing already-scanned booking details');
-                console.log('📋 Order data received:', JSON.stringify(data.order, null, 2));
-                console.log('📋 ScannedBy:', data.order?.scannedBy);
-                console.log('📋 ScannedAt:', data.order?.scannedAt);
-                console.log('📋 ScannedAtFormatted:', data.order?.scannedAtFormatted);
-                
                 // Ensure we have all required fields
                 if (!data.order || !data.order.orderNumber) {
                     console.error('❌ Invalid order data in response:', data);
@@ -636,35 +690,14 @@ function scanQRCode(qrData) {
                 // Hide the result div and show booking details modal
                 resultDiv.style.display = 'none';
                 
-                // Immediately show booking details
-                console.log('🎯 About to call showBookingDetails with isAlreadyScanned=true');
-                console.log('🎯 Current view:', currentView);
-                console.log('🎯 Checking if bookingDetails element exists...');
-                
                 const bookingDetailsCheck = document.getElementById('bookingDetails');
-                console.log('🎯 bookingDetails element found:', !!bookingDetailsCheck);
                 
                 try {
                     showBookingDetails(data.order, true); // Pass true to indicate already scanned
-                    console.log('✅ showBookingDetails called successfully');
-                    
                     // Double-check modal is visible after a short delay
                     setTimeout(() => {
                         const modal = document.getElementById('bookingDetails');
-                        const computedStyle = window.getComputedStyle(modal);
-                        console.log('🔍 Modal check after 200ms:');
-                        console.log('  - display:', computedStyle.display);
-                        console.log('  - visibility:', computedStyle.visibility);
-                        console.log('  - opacity:', computedStyle.opacity);
-                        console.log('  - offsetHeight:', modal.offsetHeight);
-                        console.log('  - offsetWidth:', modal.offsetWidth);
-                        
-                        if (computedStyle.display === 'none' || modal.offsetHeight === 0) {
-                            console.error('❌ Modal is still not visible! Forcing display...');
-                            modal.style.display = 'block';
-                            modal.style.visibility = 'visible';
-                            modal.style.opacity = '1';
-                        }
+                        modal.style.display = 'block';
                     }, 200);
                 } catch (error) {
                     console.error('❌ Error calling showBookingDetails:', error);
@@ -675,9 +708,6 @@ function scanQRCode(qrData) {
                 }
             } else {
                 // Valid ticket - show booking details
-                console.log('📋 Showing valid booking details');
-                console.log('📋 Order data received:', data.order);
-                
                 // Ensure we have all required fields
                 if (!data.order || !data.order.orderNumber) {
                     console.error('❌ Invalid order data in response:', data);
@@ -734,8 +764,6 @@ function scanQRCode(qrData) {
 
 // Show booking details modal
 function showBookingDetails(order, isAlreadyScanned = false) {
-    console.log('🎯 showBookingDetails called with:', { order, isAlreadyScanned });
-    
     const bookingInfo = document.getElementById('bookingInfo');
     const bookingDetails = document.getElementById('bookingDetails');
     
@@ -750,8 +778,6 @@ function showBookingDetails(order, isAlreadyScanned = false) {
         alert('Error: Booking details modal not found. Please refresh the page.');
         return;
     }
-    
-    console.log('✅ Found bookingInfo and bookingDetails elements');
     
     const totalAmount = order.totalAmount || order.amount || 0;
     
@@ -824,12 +850,6 @@ function showBookingDetails(order, isAlreadyScanned = false) {
         </div>
     `;
     
-    // Store order data for confirmation (ensure all required fields are present)
-    console.log('📋 Booking details shown for order:', order);
-    console.log('📋 Order has orderId:', order.orderId);
-    console.log('📋 Order has orderNumber:', order.orderNumber);
-    console.log('📋 Is already scanned:', isAlreadyScanned);
-    
     // Set accept button based on scan status
     const confirmBtn = document.getElementById('confirmBtn');
     const rejectBtn = document.getElementById('rejectBtn');
@@ -855,11 +875,6 @@ function showBookingDetails(order, isAlreadyScanned = false) {
         rejectBtn.disabled = false;
     }
     
-    console.log('🎯 Displaying booking details modal');
-    console.log('🎯 bookingDetails element:', bookingDetails);
-    console.log('🎯 Current display style:', bookingDetails.style.display);
-    console.log('🎯 bookingInfo innerHTML length:', bookingInfo.innerHTML.length);
-    
     // Force display
     bookingDetails.style.display = 'block';
     bookingDetails.style.visibility = 'visible';
@@ -868,12 +883,6 @@ function showBookingDetails(order, isAlreadyScanned = false) {
     // Make sure it's not hidden by CSS
     bookingDetails.classList.remove('hidden');
     bookingDetails.removeAttribute('hidden');
-    
-    console.log('✅ Modal display set to block');
-    console.log('✅ Modal computed style:', window.getComputedStyle(bookingDetails).display);
-    console.log('✅ Modal offsetHeight:', bookingDetails.offsetHeight);
-    console.log('✅ Modal offsetWidth:', bookingDetails.offsetWidth);
-    console.log('✅ Modal is visible:', bookingDetails.offsetHeight > 0 && bookingDetails.offsetWidth > 0);
     
     // Force a reflow to ensure display
     void bookingDetails.offsetHeight;
@@ -897,9 +906,6 @@ function closeBookingDetails() {
 
 // Confirm entry
 async function confirmEntry() {
-    console.log('🔍 Attempting to confirm entry...');
-    console.log('🔍 currentScannedOrder:', currentScannedOrder);
-    
     if (!currentScannedOrder) {
         console.error('❌ No currentScannedOrder object');
         alert('No order to confirm. Please scan the QR code again.');
@@ -976,7 +982,6 @@ function rejectEntry() {
 function testQRScan() {
     const testData = prompt('Enter test QR data (JSON format with userId and eventId, or orderNumber):');
     if (testData) {
-        console.log('🧪 Testing QR scan with data:', testData);
         scanQRCode(testData);
     }
 }
@@ -1084,22 +1089,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Register Service Worker for PWA
     if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-                console.log('SW registered: ', registration);
-            })
-            .catch((registrationError) => {
-                console.log('SW registration failed: ', registrationError);
-            });
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
 
-    // Check if jsQR library is loaded
+    // Basic jsQR presence check (no debug logs)
     setTimeout(() => {
         if (typeof jsQR === 'undefined') {
             console.error('⚠️ jsQR library not loaded! QR scanning will not work.');
-            console.log('Please check if the jsQR script is loaded in the HTML file.');
-        } else {
-            console.log('✅ jsQR library loaded successfully');
         }
     }, 1000);
 
@@ -1109,8 +1105,29 @@ document.addEventListener('DOMContentLoaded', () => {
         manualInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 scanQRCode(manualInput.value);
+        }
+    });
+
+    // Image file preview for events
+    const imageFileInput = document.getElementById('eventImageFile');
+    const previewWrapper = document.getElementById('eventImagePreviewWrapper');
+    const previewImg = document.getElementById('eventImagePreview');
+    if (imageFileInput && previewWrapper && previewImg) {
+        imageFileInput.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) {
+                previewImg.src = '';
+                previewWrapper.style.display = 'none';
+                return;
             }
+            const reader = new FileReader();
+            reader.onload = () => {
+                previewImg.src = reader.result;
+                previewWrapper.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
         });
+    }
     }
 });
 

@@ -344,13 +344,11 @@
             // Form submission
             form.addEventListener('submit', async function(e) {
             e.preventDefault();
-            console.log('📝 Form submit event triggered');
             
             const fullName = document.getElementById('fullName').value.trim();
             const phoneNumber = document.getElementById('phoneNumber').value.trim();
             const email = document.getElementById('email').value.trim();
             
-            console.log('📋 Form data:', { fullName, phoneNumber, email, sessionId });
             
             // Validate all fields
             let isValid = true;
@@ -391,9 +389,6 @@
                 // Get backend URL - use current origin (form is served from backend)
                 let backendUrl = window.location.origin;
                 
-                console.log('📝 Form submission started');
-                console.log('🔗 Backend URL:', backendUrl);
-                console.log('📋 Session ID:', sessionId);
                 
                 // Submit form data
                 const response = await fetch(`${backendUrl}/api/whatsapp/user-form-submit`, {
@@ -409,7 +404,6 @@
                     }),
                 });
                 
-                console.log('📡 Response status:', response.status);
                 
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
@@ -417,7 +411,6 @@
                 }
                 
                 const data = await response.json();
-                console.log('✅ Response data:', data);
                 
                 if (data.success) {
                     // Show success message
