@@ -2975,6 +2975,7 @@ app.get('/api/admin/events', authenticateAdmin, async (req, res, next) => {
           ISNULL(SUM(CASE WHEN o.Status = 'completed' THEN o.Amount ELSE 0 END), 0) as Revenue
         FROM Events e
         LEFT JOIN Orders o ON e.EventID = o.EventID
+        WHERE e.IsActive = 1
         GROUP BY e.EventID, e.EventName, e.EventCode, e.EventDate, e.EventTime, e.Venue, e.Description, e.ImageURL, e.IsActive
         ORDER BY e.EventDate DESC;
       `);
