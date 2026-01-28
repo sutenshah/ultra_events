@@ -558,50 +558,85 @@ async function uploadEventImage(file) {
 async function loadOrders() {
     const data = await apiCall('/api/admin/orders?status=completed&limit=100');
     if (!data || !data.success) {
-        document.getElementById('ordersTable').innerHTML = '<tr><td colspan="7" class="empty-state">Failed to load orders</td></tr>';
+        document.getElementById('ordersTable').innerHTML =
+            '<tr><td colspan="7" class="empty-state">Failed to load orders</td></tr>';
         return;
     }
 
     const tbody = document.getElementById('ordersTable');
     if (data.orders.length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No orders found</td></tr>';
-    } else {
-        const sorted = [...data.orders].sort((a, b) => {
-            const aEvent = (a.event || '').toLowerCase();
-            const bEvent = (b.event || '').toLowerCase();
-            if (aEvent < bEvent) return -1;
-            if (aEvent > bEvent) return 1;
-
-            const aTime = a.updatedAt || a.createdAt;
-            const bTime = b.updatedAt || b.createdAt;
-            if (!aTime && !bTime) return 0;
-            if (!aTime) return 1;
-            if (!bTime) return -1;
-            return new Date(bTime) - new Date(aTime);
-        });
-
-        tbody.innerHTML = sorted.map(order => `
-            <tr>
-                <td>#${order.id}</td>
-                <td>${order.customer}</td>
-                <td>${order.event}</td>
-                <td>${order.ticketType}</td>
-                <td>${formatCurrency(order.amount)}</td>
-                <td>${
-                    (order.updatedAt || order.createdAt)
-                        ? new Date(order.updatedAt || order.createdAt).toLocaleString('en-GB', {
-                              day: '2-digit',
-                              month: 'short',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                          })
-                        : '-'
-                }</td>
-                <td><span class="badge badge-success">${order.status}</span></td>
-            </tr>
-        `).join('');
+        return;
     }
+
+    // Sort globally by event name, then by UpdatedAt/CreatedAt (newest first)
+    const sorted = [...data.orders].sort((a, b) => {
+        const aEvent = (a.event || '').toLowerCase();
+        const bEvent = (b.event || '').toLowerCase();
+        if (aEvent < bEvent) return -1;
+        if (aEvent > bEvent) return 1;
+
+        const aTime = a.updatedAt || a.createdAt;
+        const bTime = b.updatedAt || b.createdAt;
+        if (!aTime && !bTime) return 0;
+        if (!aTime) return 1;
+        if (!bTime) return -1;
+        return new Date(bTime) - new Date(aTime);
+    });
+
+    // Group orders by event
+    const groups = new Map();
+    for (const order of sorted) {
+        const key = order.event || 'Unknown Event';
+        if (!groups.has(key)) {
+            groups.set(key, []);
+        }
+        groups.get(key).push(order);
+    }
+
+    // Build table rows with an "Event section" header for each event
+    const rows = [];
+    for (const [eventName, orders] of groups.entries()) {
+        // Event header row spanning all columns
+        rows.push(`
+            <tr class="orders-event-header">
+                <td colspan="7">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-weight:600;">${eventName}</span>
+                        <span style="font-size:12px;color:#6b7280;">${orders.length} order(s)</span>
+                    </div>
+                </td>
+            </tr>
+        `);
+
+        // Orders for this event
+        for (const order of orders) {
+            const ts = order.updatedAt || order.createdAt;
+            const tsText = ts
+                ? new Date(ts).toLocaleString('en-GB', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                  })
+                : '-';
+
+            rows.push(`
+                <tr>
+                    <td>#${order.id}</td>
+                    <td>${order.customer}</td>
+                    <td>${order.ticketType}</td>
+                    <td>${formatCurrency(order.amount)}</td>
+                    <td>${tsText}</td>
+                    <td><span class="badge badge-success">${order.status}</span></td>
+                    <td>${order.orderNumber || '-'}</td>
+                </tr>
+            `);
+        }
+    }
+
+    tbody.innerHTML = rows.join('');
 }
 
 // QR Scanner
