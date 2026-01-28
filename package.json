@@ -21,6 +21,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.0.1",
     "mssql": "^12.2.0",
+    "multer": "^2.0.2",
     "qrcode": "^1.5.4",
     "razorpay": "^2.9.6",
     "uuid": "^13.0.0"
