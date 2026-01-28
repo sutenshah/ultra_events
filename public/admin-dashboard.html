@@ -30,17 +30,21 @@
         /* Sidebar */
         #sidebar {
             width: 260px;
-            background: #111827;
-            color: #e5e7eb;
-            padding: 20px 16px;
+            background: #ffffff;
+            color: #111827;
+            padding: 24px 18px;
             display: flex;
             flex-direction: column;
+            box-shadow: 4px 0 18px rgba(15, 23, 42, 0.12);
         }
 
         #sidebar .logo {
-            font-size: 20px;
-            font-weight: 700;
-            margin-bottom: 24px;
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            margin-bottom: 26px;
+            color: #111827;
         }
 
         .nav-item {
@@ -48,15 +52,18 @@
             align-items: center;
             gap: 8px;
             padding: 10px 12px;
-            border-radius: 8px;
-            color: #e5e7eb;
+            border-radius: 999px;
+            color: #4b5563;
             cursor: pointer;
             font-size: 14px;
             margin-bottom: 6px;
+            transition: background .18s ease-out, transform .12s ease-out, color .18s ease-out;
         }
 
         .nav-item.active {
-            background: #1f2937;
+            background: linear-gradient(90deg, #6366f1, #22c55e);
+            color: #ffffff;
+            transform: translateX(4px);
         }
 
         .nav-item[data-action="logout"] {
@@ -67,14 +74,15 @@
         /* Top bar + content */
         .main {
             flex: 1;
-            padding: 16px;
+            padding: 20px;
+            background: #f3f4f6;
         }
 
         .topbar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 16px;
+            margin-bottom: 18px;
         }
 
         #menuToggle {
@@ -82,8 +90,8 @@
         }
 
         .views {
-            max-width: 1100px;
-            margin: 0 auto;
+            max-width: 1120px;
+            margin: 0 auto 24px;
         }
 
         .view {
@@ -93,19 +101,23 @@
         /* Cards / sections */
         .card {
             background: #ffffff;
-            border-radius: 14px;
-            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
             padding: 18px 20px;
             margin-bottom: 18px;
+            border: 1px solid #e5e7eb;
         }
 
         h1 {
             font-size: 22px;
+            letter-spacing: .03em;
+            text-transform: uppercase;
         }
 
         h2 {
-            font-size: 18px;
+            font-size: 17px;
             margin-bottom: 8px;
+            letter-spacing: .02em;
         }
 
         .header {
@@ -155,13 +167,14 @@
         .booking-details {
             margin-top: 18px;
             background: #ffffff;
-            border-radius: 14px;
-            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+            border-radius: 16px;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
             padding: 18px 18px 14px;
+            border: 1px solid #e5e7eb;
         }
 
         .booking-details h3 {
-            font-size: 16px;
+            font-size: 15px;
             margin-bottom: 14px;
             display: flex;
             align-items: center;
@@ -224,8 +237,9 @@
         }
 
         .btn-primary {
-            background: #4f46e5;
-            color: white;
+            background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+            color: #ffffff;
+            box-shadow: 0 8px 18px rgba(79, 70, 229, 0.35);
         }
 
         .btn-secondary {
@@ -277,6 +291,75 @@
             text-align: center;
             padding: 18px 0;
             color: #6b7280;
+        }
+
+        /* Dashboard stat cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .stat-card {
+            position: relative;
+            padding: 14px 14px 12px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #eef2ff 0%, #eff6ff 60%, #ecfdf5 100%);
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 10px 24px rgba(148, 163, 184, 0.4);
+            overflow: hidden;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            color: #6b7280;
+            margin-bottom: 6px;
+        }
+
+        .stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #111827;
+        }
+
+        .stat-sub {
+            margin-top: 4px;
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        .stat-pill {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(59, 130, 246, 0.14);
+            color: #1d4ed8;
+        }
+
+        .stat-icon {
+            position: absolute;
+            bottom: -8px;
+            right: -4px;
+            font-size: 32px;
+            opacity: .18;
+        }
+
+        /* Recent events table tweaks */
+        .table-container table thead tr {
+            background: #f3f4f6;
+        }
+
+        .table-container table tbody tr:nth-child(even) {
+            background: #f9fafb;
+        }
+
+        .table-container table tbody tr:hover {
+            background: #eef2ff;
         }
 
         /* Responsive */
@@ -346,22 +429,34 @@
                         <div class="header">
                             <h2>Overview</h2>
                         </div>
-                        <div class="booking-info" style="grid-template-columns: repeat(4,minmax(0,1fr));">
-                            <div class="booking-info-item">
-                                <label>Total Events</label>
-                                <span id="statTotalEvents">-</span>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-pill">Events</div>
+                                <div class="stat-label">Total Events</div>
+                                <div class="stat-value" id="statTotalEvents">-</div>
+                                <div class="stat-sub">Active & upcoming shows</div>
+                                <div class="stat-icon">🎉</div>
                             </div>
-                            <div class="booking-info-item">
-                                <label>Tickets Sold</label>
-                                <span id="statTicketsSold">-</span>
+                            <div class="stat-card">
+                                <div class="stat-pill">Tickets</div>
+                                <div class="stat-label">Tickets Sold</div>
+                                <div class="stat-value" id="statTicketsSold">-</div>
+                                <div class="stat-sub">Total confirmed entries</div>
+                                <div class="stat-icon">🎟️</div>
                             </div>
-                            <div class="booking-info-item">
-                                <label>Total Revenue</label>
-                                <span id="statTotalRevenue">-</span>
+                            <div class="stat-card">
+                                <div class="stat-pill">Revenue</div>
+                                <div class="stat-label">Total Revenue</div>
+                                <div class="stat-value" id="statTotalRevenue">-</div>
+                                <div class="stat-sub">All completed payments</div>
+                                <div class="stat-icon">💰</div>
                             </div>
-                            <div class="booking-info-item">
-                                <label>Pending Orders</label>
-                                <span id="statPendingOrders">-</span>
+                            <div class="stat-card">
+                                <div class="stat-pill">Pending</div>
+                                <div class="stat-label">Pending Orders</div>
+                                <div class="stat-value" id="statPendingOrders">-</div>
+                                <div class="stat-sub">Awaiting payment or confirmation</div>
+                                <div class="stat-icon">⏳</div>
                             </div>
                         </div>
                     </div>
@@ -433,8 +528,25 @@
                                     <span><input id="eventImageURL" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d1d5db;"></span>
                                 </div>
                             </div>
+
+                            <!-- Ticket types for this event -->
+                            <div class="card" style="margin-top:14px;padding:14px 14px 10px;">
+                                <div class="header" style="margin-bottom:10px;">
+                                    <h2 style="font-size:15px;margin:0;">Ticket Types</h2>
+                                </div>
+                                <div id="ticketTypesContainer" class="booking-info" style="grid-template-columns: repeat(3,minmax(0,1fr));gap:8px 10px;">
+                                    <!-- Rows injected by admin-dashboard.js -->
+                                </div>
+                                <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+                                    <button type="button" class="btn btn-secondary" onclick="addTicketTypeRow()">+ Add Ticket Type</button>
+                                </div>
+                                <p style="margin-top:8px;font-size:11px;color:#6b7280;">
+                                    Each ticket type should have a name (e.g. “VIP - Couple”), price, and total quantity available.
+                                </p>
+                            </div>
+
                             <div class="booking-actions">
-                                <button type="submit" class="btn btn-primary">Save</button>
+                                <button type="submit" class="btn btn-primary">Save Event</button>
                                 <button type="button" class="btn btn-secondary" onclick="closeEventModal()">Cancel</button>
                             </div>
                         </form>

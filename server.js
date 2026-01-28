@@ -3010,11 +3010,11 @@ app.post('/api/admin/events', authenticateAdmin, requireRole('admin', 'superadmi
   }
 });
 
-// Update event
+// Update event (and optionally its ticket types)
 app.put('/api/admin/events/:id', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {
   try {
     const eventId = parseInt(req.params.id);
-    const { name, date, time, venue, description, imageURL, isActive } = req.body;
+    const { name, date, time, venue, description, imageURL, isActive, ticketTypes } = req.body;
 
     if (!eventId) {
       return res.status(400).json({ success: false, message: 'Invalid event ID' });
@@ -3064,6 +3064,77 @@ app.put('/api/admin/events/:id', authenticateAdmin, requireRole('admin', 'supera
       SET ${updates.join(', ')}
       WHERE EventID = @eventId;
     `);
+    
+    // If ticketTypes array is provided, upsert ticket types for this event
+    if (ticketTypes && Array.isArray(ticketTypes)) {
+      // Get existing ticket types for this event
+      const existingResult = await pool
+        .request()
+        .input('eventId', sql.Int, eventId)
+        .query('SELECT TicketTypeID FROM TicketTypes WHERE EventID = @eventId;');
+
+      const existingIds = new Set(existingResult.recordset.map(r => r.TicketTypeID));
+      const seenIds = new Set();
+
+      for (const ticket of ticketTypes) {
+        if (!ticket.name || ticket.price === undefined || ticket.price === null) {
+          continue;
+        }
+
+        const totalQty = ticket.totalQuantity != null ? ticket.totalQuantity : (ticket.availableQuantity != null ? ticket.availableQuantity : 100);
+        const availableQty = ticket.availableQuantity != null ? ticket.availableQuantity : totalQty;
+
+        if (ticket.id && existingIds.has(ticket.id)) {
+          // Update existing ticket type
+          await pool
+            .request()
+            .input('ticketTypeId', sql.Int, ticket.id)
+            .input('ticketName', sql.NVarChar, ticket.name)
+            .input('price', sql.Decimal(10, 2), ticket.price)
+            .input('availableQuantity', sql.Int, availableQty)
+            .input('totalQuantity', sql.Int, totalQty)
+            .query(`
+              UPDATE TicketTypes
+              SET TicketName = @ticketName,
+                  Price = @price,
+                  AvailableQuantity = @availableQuantity,
+                  TotalQuantity = @totalQuantity
+              WHERE TicketTypeID = @ticketTypeId;
+            `);
+
+          seenIds.add(ticket.id);
+        } else {
+          // Insert new ticket type
+          await pool
+            .request()
+            .input('eventId', sql.Int, eventId)
+            .input('ticketName', sql.NVarChar, ticket.name)
+            .input('price', sql.Decimal(10, 2), ticket.price)
+            .input('availableQuantity', sql.Int, availableQty)
+            .input('totalQuantity', sql.Int, totalQty)
+            .query(`
+              INSERT INTO TicketTypes (EventID, TicketName, Price, AvailableQuantity, TotalQuantity)
+              VALUES (@eventId, @ticketName, @price, @availableQuantity, @totalQuantity);
+            `);
+        }
+      }
+
+      // Optionally remove ticket types that are no longer present in payload
+      const idsToKeep = Array.from(seenIds);
+      if (idsToKeep.length > 0) {
+        const placeholders = idsToKeep.map((_, idx) => `@keepId${idx}`).join(', ');
+        const deleteRequest = pool.request().input('eventId', sql.Int, eventId);
+        idsToKeep.forEach((id, idx) => {
+          deleteRequest.input(`keepId${idx}`, sql.Int, id);
+        });
+
+        await deleteRequest.query(`
+          DELETE FROM TicketTypes
+          WHERE EventID = @eventId
+          AND TicketTypeID NOT IN (${placeholders});
+        `);
+      }
+    }
 
     res.json({ success: true, message: 'Event updated successfully' });
   } catch (err) {

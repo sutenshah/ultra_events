@@ -187,6 +187,104 @@ async function loadDashboard() {
     }
 }
 
+// ===== Events =====
+let currentTicketTypes = [];
+
+function renderTicketTypes() {
+    const container = document.getElementById('ticketTypesContainer');
+    if (!container) return;
+
+    if (!currentTicketTypes || currentTicketTypes.length === 0) {
+        container.innerHTML = `
+            <div class="booking-info-item full-width" style="text-align:center;background:#f9fafb;">
+                <label>No ticket types yet</label>
+                <span style="font-size:12px;color:#6b7280;">Click “+ Add Ticket Type” to add tickets for this event.</span>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = currentTicketTypes.map((t, index) => `
+        <div class="booking-info-item">
+            <label>Ticket Name</label>
+            <span>
+                <input
+                    type="text"
+                    value="${t.name || ''}"
+                    data-index="${index}"
+                    data-field="name"
+                    style="width:100%;padding:6px 8px;border-radius:8px;border:1px solid #d1d5db;font-size:12px;"
+                />
+            </span>
+        </div>
+        <div class="booking-info-item">
+            <label>Price (₹)</label>
+            <span>
+                <input
+                    type="number"
+                    min="0"
+                    value="${t.price ?? ''}"
+                    data-index="${index}"
+                    data-field="price"
+                    style="width:100%;padding:6px 8px;border-radius:8px;border:1px solid #d1d5db;font-size:12px;"
+                />
+            </span>
+        </div>
+        <div class="booking-info-item">
+            <label>Total Quantity</label>
+            <span style="display:flex;gap:6px;align-items:center;">
+                <input
+                    type="number"
+                    min="1"
+                    value="${t.totalQuantity ?? t.availableQuantity ?? 100}"
+                    data-index="${index}"
+                    data-field="totalQuantity"
+                    style="flex:1;padding:6px 8px;border-radius:8px;border:1px solid #d1d5db;font-size:12px;"
+                />
+                <button type="button"
+                    class="btn btn-secondary"
+                    style="padding:4px 8px;font-size:11px;"
+                    onclick="removeTicketTypeRow(${index})"
+                >✕</button>
+            </span>
+        </div>
+    `).join('');
+
+    // Attach change listeners
+    container.querySelectorAll('input[data-index]').forEach(input => {
+        input.addEventListener('input', (e) => {
+            const idx = parseInt(e.target.getAttribute('data-index'));
+            const field = e.target.getAttribute('data-field');
+            let value = e.target.value;
+
+            if (field === 'price' || field === 'totalQuantity') {
+                value = value === '' ? null : Number(value);
+            }
+
+            currentTicketTypes[idx] = {
+                ...currentTicketTypes[idx],
+                [field]: value,
+            };
+        });
+    });
+}
+
+function addTicketTypeRow() {
+    currentTicketTypes.push({
+        id: null,
+        name: '',
+        price: null,
+        availableQuantity: null,
+        totalQuantity: 100,
+    });
+    renderTicketTypes();
+}
+
+function removeTicketTypeRow(index) {
+    currentTicketTypes.splice(index, 1);
+    renderTicketTypes();
+}
+
 // Events
 async function loadEvents() {
     const data = await apiCall('/api/admin/events');
@@ -220,7 +318,12 @@ function showCreateEvent() {
     document.getElementById('eventModalTitle').textContent = 'Create Event';
     document.getElementById('eventForm').reset();
     document.getElementById('eventId').value = '';
-    document.getElementById('eventModal').classList.add('show');
+    currentTicketTypes = [];
+    renderTicketTypes();
+    const modal = document.getElementById('eventModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
 }
 
 async function editEvent(eventId) {
@@ -228,6 +331,14 @@ async function editEvent(eventId) {
     if (!data || !data.success) return;
 
     const event = data.event;
+    currentTicketTypes = (data.ticketTypes || []).map(t => ({
+        id: t.id,
+        name: t.name,
+        price: t.price,
+        availableQuantity: t.availableQuantity,
+        totalQuantity: t.totalQuantity,
+    }));
+
     document.getElementById('eventModalTitle').textContent = 'Edit Event';
     document.getElementById('eventId').value = event.id;
     document.getElementById('eventName').value = event.name;
@@ -236,17 +347,37 @@ async function editEvent(eventId) {
     document.getElementById('eventVenue').value = event.venue;
     document.getElementById('eventDescription').value = event.description || '';
     document.getElementById('eventImageURL').value = event.imageURL || '';
-    document.getElementById('eventModal').classList.add('show');
+
+    renderTicketTypes();
+    const modal = document.getElementById('eventModal');
+    if (modal) {
+        modal.style.display = 'block';
+    }
 }
 
 function closeEventModal() {
-    document.getElementById('eventModal').classList.remove('show');
+    const modal = document.getElementById('eventModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
 }
 
 document.getElementById('eventForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
     const eventId = document.getElementById('eventId').value;
+
+    // Prepare ticket types payload
+    const cleanedTicketTypes = (currentTicketTypes || [])
+        .filter(t => t.name && t.price != null && t.price !== '')
+        .map(t => ({
+            id: t.id,
+            name: t.name.trim(),
+            price: Number(t.price),
+            totalQuantity: t.totalQuantity ? Number(t.totalQuantity) : 100,
+            availableQuantity: t.totalQuantity ? Number(t.totalQuantity) : 100,
+        }));
+
     const eventData = {
         name: document.getElementById('eventName').value,
         date: document.getElementById('eventDate').value,
@@ -254,6 +385,7 @@ document.getElementById('eventForm').addEventListener('submit', async (e) => {
         venue: document.getElementById('eventVenue').value,
         description: document.getElementById('eventDescription').value,
         imageURL: document.getElementById('eventImageURL').value,
+        ticketTypes: cleanedTicketTypes,
     };
 
     let result;
