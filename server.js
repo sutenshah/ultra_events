@@ -1871,24 +1871,15 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       }
 
       const event = eventResult.recordset[0];
+      const eventId = event.EventID;
 
-      await pool
-        .request()
-        .input('phone', sql.NVarChar, phoneForDB)
-        .input('step', sql.NVarChar, 'viewing_event_details')
-        .input('data', sql.NVarChar, JSON.stringify({ selectedEventId: event.EventID }))
-        .query(`
-          IF EXISTS (SELECT 1 FROM ConversationState WHERE PhoneNumber = @phone)
-            UPDATE ConversationState
-            SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
-            WHERE PhoneNumber = @phone;
-          ELSE
-            INSERT INTO ConversationState (PhoneNumber, CurrentStep, StateData)
-            VALUES (@phone, @step, @data);
-        `);
-
-      // Jump directly into the event details / ticket selection flow
-      await handleEventDetails(phoneNumber, event.EventID);
+      // Re‑use existing selection flow so tickets + state are set correctly
+      // This will:
+      //  - load ticket types
+      //  - send event details with buttons
+      //  - update ConversationState to 'viewing_event_details'
+      const stateData = { events: [{ EventID: eventId }] };
+      await handleEventSelection(phoneNumber, `event_${eventId}`, stateData);
       return;
     }
 
