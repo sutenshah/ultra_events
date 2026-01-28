@@ -15,6 +15,9 @@ const QRCode = require('qrcode');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const axios = require('axios');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 // ------------------------------------------------------------
@@ -63,6 +66,33 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Serve static files (HTML forms)
 app.use(express.static('public'));
+
+// ------------------------------------------------------------
+// Event image upload (local filesystem)
+// ------------------------------------------------------------
+const uploadsDir = path.join(__dirname, 'public', 'uploads', 'events');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname) || '.jpg';
+    const safeName = file.originalname
+      .toLowerCase()
+      .replace(/[^a-z0-9\-\.]/g, '-')
+      .slice(0, 40);
+    cb(null, `${Date.now()}-${safeName}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+});
 
 
 //--------------------------------SUTEN TRIAL STARTS HERE--------------------------------
@@ -3009,6 +3039,29 @@ app.post('/api/admin/events', authenticateAdmin, requireRole('admin', 'superadmi
     next(err);
   }
 });
+
+// Upload event image (returns URL)
+app.post(
+  '/api/admin/events/upload-image',
+  authenticateAdmin,
+  requireRole('admin', 'superadmin'),
+  upload.single('image'),
+  async (req, res, next) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, message: 'No image file uploaded' });
+      }
+
+      const relativePath = `/uploads/events/${req.file.filename}`;
+      return res.json({
+        success: true,
+        url: relativePath,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 // Update event (and optionally its ticket types)
 app.put('/api/admin/events/:id', authenticateAdmin, requireRole('admin', 'superadmin'), async (req, res, next) => {

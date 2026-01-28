@@ -486,15 +486,22 @@ async function uploadEventImage(file) {
         body: formData,
     });
 
-    if (!response.ok) {
-        const text = await response.text();
-        console.error('Image upload failed:', text);
-        throw new Error('Image upload failed');
+    let data = null;
+    try {
+        data = await response.json();
+    } catch (_) {
+        // Fallback if response is not JSON
     }
 
-    const data = await response.json();
-    if (!data.success || !data.url) {
-        throw new Error(data.message || 'Image upload failed');
+    if (!response.ok || !data || data.success === false) {
+        const message =
+            (data && data.message) ||
+            `Image upload failed (status ${response.status})`;
+        throw new Error(message);
+    }
+
+    if (!data.url) {
+        throw new Error('Image upload failed (no URL returned)');
     }
 
     return data.url;
