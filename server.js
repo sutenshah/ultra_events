@@ -67,6 +67,11 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Serve static files (HTML forms)
 app.use(express.static('public'));
 
+// Serve favicon (redirect to icon-192.png if favicon.ico doesn't exist)
+app.get('/favicon.ico', (req, res) => {
+  res.redirect('/icon-192.png');
+});
+
 // ------------------------------------------------------------
 // Event image upload (local filesystem)
 // ------------------------------------------------------------
@@ -93,6 +98,23 @@ const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
+
+// Helper: generate QR for BOOK EVENT flow
+async function generateEventQrDataUrl(eventCode) {
+  const rawPhone = process.env.WHATSAPP_QR_PHONE || process.env.WHATSAPP_INCOMING_NUMBER || '';
+  let qrTarget = '';
+
+  if (rawPhone) {
+    const phoneDigits = rawPhone.replace(/\D/g, '');
+    const msg = encodeURIComponent(`BOOK EVENT ${eventCode}`);
+    qrTarget = `https://wa.me/${phoneDigits}?text=${msg}`;
+  } else {
+    // Fallback: plain text; scanning shows text which user can send
+    qrTarget = `BOOK EVENT ${eventCode}`;
+  }
+
+  return await QRCode.toDataURL(qrTarget);
+}
 
 
 //--------------------------------SUTEN TRIAL STARTS HERE--------------------------------
@@ -1820,6 +1842,56 @@ async function processWhatsAppMessage(phoneNumber, messageText, messageObj) {
       return;
     }
 
+    // Event QR deep-link: messages like "BOOK EVENT EVT-1005"
+    // Be tolerant of extra spaces / prefixes by using a regex on the ORIGINAL text
+    const bookEventMatch = messageText && messageText.match(/book\s+event\s+([a-z0-9\-]+)/i);
+    if (bookEventMatch && bookEventMatch[1]) {
+      const rawCode = bookEventMatch[1].trim();
+      const eventCode = rawCode.toUpperCase();
+      console.log(`📩 BOOK EVENT detected from ${phoneNumber}:`, messageText, '→ code:', eventCode);
+
+      const phoneForDB = phoneNumber.replace(/^\+/, '');
+
+      // Make sure DB connection is ready before querying
+      const ok = await ensureDBConnection();
+      if (!ok) {
+        console.error('❌ Cannot process BOOK EVENT - database not connected');
+        await sendWhatsAppMessage(phoneNumber, '⚠️ Temporary issue fetching event details. Please try again in a moment.');
+        return;
+      }
+
+      const eventResult = await pool
+        .request()
+        .input('code', sql.NVarChar, eventCode)
+        .query('SELECT TOP 1 * FROM Events WHERE EventCode = @code AND IsActive = 1;');
+
+      if (!eventResult.recordset.length) {
+        await sendWhatsAppMessage(phoneNumber, '⚠️ Sorry, this event is not available. Please try again later.');
+        return;
+      }
+
+      const event = eventResult.recordset[0];
+
+      await pool
+        .request()
+        .input('phone', sql.NVarChar, phoneForDB)
+        .input('step', sql.NVarChar, 'viewing_event_details')
+        .input('data', sql.NVarChar, JSON.stringify({ selectedEventId: event.EventID }))
+        .query(`
+          IF EXISTS (SELECT 1 FROM ConversationState WHERE PhoneNumber = @phone)
+            UPDATE ConversationState
+            SET CurrentStep = @step, StateData = @data, LastInteraction = GETDATE()
+            WHERE PhoneNumber = @phone;
+          ELSE
+            INSERT INTO ConversationState (PhoneNumber, CurrentStep, StateData)
+            VALUES (@phone, @step, @data);
+        `);
+
+      // Jump directly into the event details / ticket selection flow
+      await handleEventDetails(phoneNumber, event.EventID);
+      return;
+    }
+
     // Ensure database connection is active
     const isConnected = await ensureDBConnection();
     if (!isConnected) {
@@ -2900,6 +2972,8 @@ app.get('/api/admin/events', authenticateAdmin, async (req, res, next) => {
         SELECT 
           e.EventID,
           e.EventName,
+          e.EventCode,
+          MAX(e.EventQR) as EventQR,
           e.EventDate,
           e.EventTime,
           e.Venue,
@@ -2910,13 +2984,15 @@ app.get('/api/admin/events', authenticateAdmin, async (req, res, next) => {
           ISNULL(SUM(CASE WHEN o.Status = 'completed' THEN o.Amount ELSE 0 END), 0) as Revenue
         FROM Events e
         LEFT JOIN Orders o ON e.EventID = o.EventID
-        GROUP BY e.EventID, e.EventName, e.EventDate, e.EventTime, e.Venue, e.Description, e.ImageURL, e.IsActive
+        GROUP BY e.EventID, e.EventName, e.EventCode, e.EventDate, e.EventTime, e.Venue, e.Description, e.ImageURL, e.IsActive
         ORDER BY e.EventDate DESC;
       `);
 
     const events = result.recordset.map(event => ({
       id: event.EventID,
       name: event.EventName,
+      eventCode: event.EventCode,
+      eventQr: event.EventQR,
       date: new Date(event.EventDate).toISOString().split('T')[0],
       time: event.EventTime,
       venue: event.Venue,
@@ -2954,6 +3030,44 @@ app.get('/api/admin/events/:id', authenticateAdmin, async (req, res, next) => {
 
     const event = eventResult.recordset[0];
 
+    // Ensure this event has an EventCode and EventQR; if missing, generate and persist
+    let eventCode = event.EventCode;
+    if (!eventCode) {
+      eventCode = `EVT-${event.EventID}`;
+    }
+    
+    // Generate QR if missing
+    let eventQr = event.EventQR;
+    if (!eventQr) {
+      try {
+        eventQr = await generateEventQrDataUrl(eventCode);
+        console.log(`✅ Generated EventQR for event ${event.EventID} (${eventCode})`);
+      } catch (err) {
+        console.error(`❌ Error generating EventQR for event ${event.EventID}:`, err.message);
+        eventQr = null;
+      }
+    }
+    
+    // Update database if EventCode or EventQR is missing
+    if (!event.EventCode || !event.EventQR) {
+      try {
+        await pool
+          .request()
+          .input('eventId', sql.Int, event.EventID)
+          .input('eventCode', sql.NVarChar, eventCode)
+          .input('eventQr', sql.NVarChar, eventQr)
+          .query('UPDATE Events SET EventCode = @eventCode, EventQR = @eventQr WHERE EventID = @eventId;');
+        console.log(`✅ Updated EventCode and EventQR for event ${event.EventID} in database`);
+        event.EventCode = eventCode;
+        event.EventQR = eventQr;
+      } catch (err) {
+        console.error(`❌ Error updating EventCode/EventQR in database for event ${event.EventID}:`, err.message);
+        // Still use generated values in response even if UPDATE fails
+        event.EventCode = eventCode;
+        event.EventQR = eventQr;
+      }
+    }
+
     // Get ticket types for this event
     const ticketsResult = await pool
       .request()
@@ -2965,6 +3079,8 @@ app.get('/api/admin/events/:id', authenticateAdmin, async (req, res, next) => {
       event: {
         id: event.EventID,
         name: event.EventName,
+        eventCode: event.EventCode || eventCode,
+        eventQr: event.EventQR || eventQr,
         date: new Date(event.EventDate).toISOString().split('T')[0],
         time: event.EventTime,
         venue: event.Venue,
@@ -3011,6 +3127,31 @@ app.post('/api/admin/events', authenticateAdmin, requireRole('admin', 'superadmi
 
     const eventId = eventResult.recordset[0].EventID;
 
+    // Generate event code (e.g., EVT-1001) and save
+    const eventCode = `EVT-${eventId}`;
+    let eventQr;
+    try {
+      eventQr = await generateEventQrDataUrl(eventCode);
+      console.log(`✅ Generated EventQR for new event ${eventId} (${eventCode})`);
+    } catch (err) {
+      console.error(`❌ Error generating EventQR for new event ${eventId}:`, err.message);
+      eventQr = null;
+    }
+    
+    if (eventQr) {
+      try {
+        await pool
+          .request()
+          .input('eventId', sql.Int, eventId)
+          .input('eventCode', sql.NVarChar, eventCode)
+          .input('eventQr', sql.NVarChar, eventQr)
+          .query('UPDATE Events SET EventCode = @eventCode, EventQR = @eventQr WHERE EventID = @eventId;');
+        console.log(`✅ Saved EventCode and EventQR for new event ${eventId} in database`);
+      } catch (err) {
+        console.error(`❌ Error saving EventCode/EventQR for new event ${eventId}:`, err.message);
+      }
+    }
+
     // Insert ticket types if provided
     if (ticketTypes && Array.isArray(ticketTypes) && ticketTypes.length > 0) {
       for (const ticket of ticketTypes) {
@@ -3034,6 +3175,7 @@ app.post('/api/admin/events', authenticateAdmin, requireRole('admin', 'superadmi
       success: true,
       message: 'Event created successfully',
       eventId,
+      eventCode,
     });
   } catch (err) {
     next(err);
@@ -3117,7 +3259,43 @@ app.put('/api/admin/events/:id', authenticateAdmin, requireRole('admin', 'supera
       SET ${updates.join(', ')}
       WHERE EventID = @eventId;
     `);
-    
+
+    // Refresh event code and QR after update - ensure they exist
+    const eventResult = await pool
+      .request()
+      .input('eventId', sql.Int, eventId)
+      .query('SELECT EventCode, EventQR FROM Events WHERE EventID = @eventId;');
+
+    if (eventResult.recordset.length) {
+      let { EventCode: eventCode, EventQR: eventQr } = eventResult.recordset[0];
+      if (!eventCode) {
+        eventCode = `EVT-${eventId}`;
+      }
+      if (!eventQr) {
+        try {
+          eventQr = await generateEventQrDataUrl(eventCode);
+          console.log(`✅ Generated EventQR for event ${eventId} (${eventCode}) during update`);
+        } catch (err) {
+          console.error(`❌ Error generating EventQR for event ${eventId}:`, err.message);
+          eventQr = null;
+        }
+      }
+      
+      if (eventQr) {
+        try {
+          await pool
+            .request()
+            .input('eventId', sql.Int, eventId)
+            .input('eventCode', sql.NVarChar, eventCode)
+            .input('eventQr', sql.NVarChar, eventQr)
+            .query('UPDATE Events SET EventCode = @eventCode, EventQR = @eventQr WHERE EventID = @eventId;');
+          console.log(`✅ Updated EventCode and EventQR for event ${eventId} in database`);
+        } catch (err) {
+          console.error(`❌ Error updating EventCode/EventQR in database for event ${eventId}:`, err.message);
+        }
+      }
+    }
+
     // If ticketTypes array is provided, upsert ticket types for this event
     if (ticketTypes && Array.isArray(ticketTypes)) {
       // Get existing ticket types for this event
@@ -3230,6 +3408,7 @@ app.get('/api/admin/orders', authenticateAdmin, async (req, res, next) => {
         o.Status,
         o.Amount,
         o.CreatedAt,
+        o.UpdatedAt,
         o.IsScanned,
         o.ScannedAt,
         o.ScannedBy,
@@ -3254,7 +3433,7 @@ app.get('/api/admin/orders', authenticateAdmin, async (req, res, next) => {
       query += ' WHERE o.Status = \'completed\'';
     }
 
-    query += ' ORDER BY o.CreatedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;';
+    query += ' ORDER BY e.EventName ASC, o.UpdatedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY;';
     request.input('offset', sql.Int, parseInt(offset));
     request.input('limit', sql.Int, parseInt(limit));
 
@@ -3272,6 +3451,7 @@ app.get('/api/admin/orders', authenticateAdmin, async (req, res, next) => {
       scannedAt: order.ScannedAt,
       scannedBy: order.ScannedBy,
       createdAt: order.CreatedAt,
+      updatedAt: order.UpdatedAt,
     }));
 
     res.json({ success: true, orders });
@@ -4376,16 +4556,71 @@ async function createTables() {
     CREATE TABLE Events (
       EventID INT IDENTITY(1,1) PRIMARY KEY,
       EventName NVARCHAR(200) NOT NULL,
+      EventCode NVARCHAR(50) NULL,
       EventDate DATE NOT NULL,
       EventTime TIME NOT NULL,
       Venue NVARCHAR(300) NOT NULL,
       Description NVARCHAR(MAX),
       ImageURL NVARCHAR(500),
+      EventQR NVARCHAR(MAX),
       IsActive BIT DEFAULT 1,
       CreatedAt DATETIME DEFAULT GETDATE(),
       UpdatedAt DATETIME DEFAULT GETDATE()
     );
   `);
+
+  // Add EventCode column to Events if it doesn't exist (migration)
+  await request.query(`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID('Events') AND name = 'EventCode'
+    )
+    ALTER TABLE Events ADD EventCode NVARCHAR(50) NULL;
+  `);
+
+  // Add EventQR column if it doesn't exist (for printed event QR codes)
+  await request.query(`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID('Events') AND name = 'EventQR'
+    )
+    ALTER TABLE Events ADD EventQR NVARCHAR(MAX) NULL;
+  `);
+
+  // Ensure existing rows have an EventCode
+  await request.query(`
+    UPDATE Events
+    SET EventCode = CONCAT('EVT-', EventID)
+    WHERE EventCode IS NULL;
+  `);
+
+  // Populate EventQR for existing events that don't have it
+  try {
+    const eventsWithoutQr = await pool
+      .request()
+      .query('SELECT EventID, EventCode FROM Events WHERE EventQR IS NULL;');
+    
+    if (eventsWithoutQr.recordset.length > 0) {
+      console.log(`📋 Found ${eventsWithoutQr.recordset.length} events without EventQR. Generating QR codes...`);
+      for (const event of eventsWithoutQr.recordset) {
+        const eventCode = event.EventCode || `EVT-${event.EventID}`;
+        try {
+          const eventQr = await generateEventQrDataUrl(eventCode);
+          await pool
+            .request()
+            .input('eventId', sql.Int, event.EventID)
+            .input('eventQr', sql.NVarChar, eventQr)
+            .query('UPDATE Events SET EventQR = @eventQr WHERE EventID = @eventId;');
+          console.log(`✅ Generated and saved EventQR for event ${event.EventID} (${eventCode})`);
+        } catch (err) {
+          console.error(`❌ Error generating EventQR for event ${event.EventID}:`, err.message);
+        }
+      }
+      console.log(`✅ Finished populating EventQR for existing events`);
+    }
+  } catch (err) {
+    console.error('❌ Error populating EventQR for existing events:', err.message);
+  }
 
   await request.query(`
     IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE name='TicketTypes' AND type='U')

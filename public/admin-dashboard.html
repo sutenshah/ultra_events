@@ -655,6 +655,25 @@
                                 <button type="button" class="btn btn-secondary" onclick="closeEventModal()">Cancel</button>
                                 <button type="button" class="btn btn-danger" id="deleteEventBtn" onclick="deleteEvent()" style="margin-left:auto;display:none;">Delete Event</button>
                             </div>
+
+                            <div class="booking-info-item full-width" id="eventCodeRow" style="margin-top:8px;display:none;">
+                                <label>Event Code (for QR booking)</label>
+                                <span id="eventCodeDisplay" style="font-weight:600;"></span>
+                                <small style="display:block;margin-top:4px;font-size:11px;color:#6b7280;">
+                                    Guests can scan the printed QR to send “BOOK EVENT &lt;code&gt;” on WhatsApp and start booking instantly.
+                                </small>
+                            </div>
+
+                            <div class="booking-info-item full-width" id="eventQrRow" style="margin-top:8px;display:none;">
+                                <label>Event QR</label>
+                                <span>
+                                    <img id="eventQrImage" src="" alt="Event QR" style="max-width:160px;border-radius:10px;border:1px solid #e5e7eb;">
+                                    <button type="button" class="btn btn-secondary" style="margin-left:10px;" onclick="downloadEventQr()">Download QR</button>
+                                </span>
+                                <small style="display:block;margin-top:4px;font-size:11px;color:#6b7280;">
+                                    Print this QR and place it at the venue. When scanned, guests start the WhatsApp booking flow directly for this event.
+                                </small>
+                            </div>
                         </form>
                     </div>
                 </div>
@@ -674,12 +693,13 @@
                                         <th>Event</th>
                                         <th>Ticket</th>
                                         <th>Amount</th>
+                                        <th>Updated At</th>
                                         <th>Status</th>
                                     </tr>
                                 </thead>
                                 <tbody id="ordersTable">
                                     <tr>
-                                        <td colspan="6" class="empty-state">Loading orders...</td>
+                                        <td colspan="7" class="empty-state">Loading orders...</td>
                                     </tr>
                                 </tbody>
                             </table>

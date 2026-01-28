@@ -181,6 +181,7 @@ async function loadDashboard() {
 
 // ===== Events =====
 let currentTicketTypes = [];
+let currentEventQrDataUrl = '';
 
 function renderTicketTypes() {
     const container = document.getElementById('ticketTypesContainer');
@@ -295,6 +296,9 @@ async function loadEvents() {
                 <div class="event-content">
                     <h3>${event.name}</h3>
                     <p>📅 ${formatDate(event.date)}</p>
+                    <p style="font-size:12px;color:#6b7280;margin-top:2px;">
+                        Code: <strong>${event.eventCode || '-'}</strong>
+                    </p>
                     <div class="event-meta">
                         <span>Tickets: <strong>${event.ticketsSold}</strong></span>
                         <span class="event-revenue">${formatCurrency(event.revenue)}</span>
@@ -322,6 +326,12 @@ function showCreateEvent() {
         previewImg.src = '';
         previewWrapper.style.display = 'none';
     }
+    // Hide event code / QR for new event until after first save+reload
+    const codeRow = document.getElementById('eventCodeRow');
+    const qrRow = document.getElementById('eventQrRow');
+    if (codeRow) codeRow.style.display = 'none';
+    if (qrRow) qrRow.style.display = 'none';
+    currentEventQrDataUrl = '';
     const modal = document.getElementById('eventModal');
     if (modal) {
         modal.style.display = 'block';
@@ -367,6 +377,27 @@ async function editEvent(eventId) {
             previewImg.src = '';
             previewWrapper.style.display = 'none';
         }
+    }
+
+    // Show event code if available
+    const codeRow = document.getElementById('eventCodeRow');
+    const codeDisplay = document.getElementById('eventCodeDisplay');
+    if (codeRow && codeDisplay) {
+        const code = event.eventCode || `EVT-${event.id}`;
+        codeDisplay.textContent = code;
+        codeRow.style.display = 'block';
+    }
+
+    // Show Event QR if available
+    const qrRow = document.getElementById('eventQrRow');
+    const qrImg = document.getElementById('eventQrImage');
+    if (qrRow && qrImg && event.eventQr) {
+        currentEventQrDataUrl = event.eventQr;
+        qrImg.src = event.eventQr;
+        qrRow.style.display = 'block';
+    } else if (qrRow) {
+        currentEventQrDataUrl = '';
+        qrRow.style.display = 'none';
     }
 
     renderTicketTypes();
@@ -472,6 +503,22 @@ async function deleteEvent() {
     }
 }
 
+function downloadEventQr() {
+    if (!currentEventQrDataUrl) {
+        alert('No QR available for this event yet. Please save the event and reopen.');
+        return;
+    }
+    const codeText = (document.getElementById('eventCodeDisplay')?.textContent || 'event-qr')
+        .trim()
+        .replace(/\s+/g, '_');
+    const link = document.createElement('a');
+    link.href = currentEventQrDataUrl;
+    link.download = `${codeText || 'event-qr'}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 // Upload event image file and return URL from server
 async function uploadEventImage(file) {
     const token = localStorage.getItem('adminToken');
@@ -511,21 +558,46 @@ async function uploadEventImage(file) {
 async function loadOrders() {
     const data = await apiCall('/api/admin/orders?status=completed&limit=100');
     if (!data || !data.success) {
-        document.getElementById('ordersTable').innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load orders</td></tr>';
+        document.getElementById('ordersTable').innerHTML = '<tr><td colspan="7" class="empty-state">Failed to load orders</td></tr>';
         return;
     }
 
     const tbody = document.getElementById('ordersTable');
     if (data.orders.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No orders found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No orders found</td></tr>';
     } else {
-        tbody.innerHTML = data.orders.map(order => `
+        const sorted = [...data.orders].sort((a, b) => {
+            const aEvent = (a.event || '').toLowerCase();
+            const bEvent = (b.event || '').toLowerCase();
+            if (aEvent < bEvent) return -1;
+            if (aEvent > bEvent) return 1;
+
+            const aTime = a.updatedAt || a.createdAt;
+            const bTime = b.updatedAt || b.createdAt;
+            if (!aTime && !bTime) return 0;
+            if (!aTime) return 1;
+            if (!bTime) return -1;
+            return new Date(bTime) - new Date(aTime);
+        });
+
+        tbody.innerHTML = sorted.map(order => `
             <tr>
                 <td>#${order.id}</td>
                 <td>${order.customer}</td>
                 <td>${order.event}</td>
                 <td>${order.ticketType}</td>
                 <td>${formatCurrency(order.amount)}</td>
+                <td>${
+                    (order.updatedAt || order.createdAt)
+                        ? new Date(order.updatedAt || order.createdAt).toLocaleString('en-GB', {
+                              day: '2-digit',
+                              month: 'short',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                          })
+                        : '-'
+                }</td>
                 <td><span class="badge badge-success">${order.status}</span></td>
             </tr>
         `).join('');
