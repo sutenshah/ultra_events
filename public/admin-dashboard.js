@@ -849,21 +849,6 @@ function testQRScan() {
     }
 }
 
-// Add manual QR input field
-document.addEventListener('DOMContentLoaded', () => {
-    const scannerContainer = document.querySelector('.scanner-container');
-    const manualInput = document.createElement('div');
-    manualInput.innerHTML = `
-        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-            <p style="margin-bottom: 10px; color: #666;">Or enter QR code manually:</p>
-            <input type="text" id="manualQRInput" placeholder="Paste QR code data here" 
-                   style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px;">
-            <button class="btn btn-primary" onclick="scanQRCode(document.getElementById('manualQRInput').value)">Scan</button>
-        </div>
-    `;
-    scannerContainer.appendChild(manualInput);
-});
-
 // Users
 async function loadUsers() {
     const data = await apiCall('/api/admin/users');
