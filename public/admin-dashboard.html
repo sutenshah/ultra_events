@@ -322,17 +322,21 @@
         <aside id="sidebar">
             <div class="logo">Ultraa Events</div>
             <div class="nav-item active" data-view="dashboard">📊 Dashboard</div>
-            <div class="nav-item" data-view="events">📅 Events</div>
-            <div class="nav-item" data-view="orders">📦 Orders</div>
+            <div class="nav-item" id="eventsNav" data-view="events">📅 Events</div>
+            <div class="nav-item" id="ordersNav" data-view="orders">📦 Orders</div>
             <div class="nav-item" data-view="scanner">📷 QR Scanner</div>
-            <div class="nav-item" data-view="users">👤 Users</div>
+            <div class="nav-item" id="usersNav" data-view="users" style="display:none;">👤 Users</div>
             <div class="nav-item" data-action="logout">🚪 Logout</div>
         </aside>
 
         <main class="main">
             <div class="topbar">
                 <h1>Admin Panel</h1>
-                <button id="menuToggle">☰ Menu</button>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:13px;color:#6b7280;">Signed in as</span>
+                    <span id="userName" style="font-size:14px;font-weight:600;color:#111827;">Admin</span>
+                    <button id="menuToggle">☰ Menu</button>
+                </div>
             </div>
 
             <div class="views">
